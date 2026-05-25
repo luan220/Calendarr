@@ -1,0 +1,43 @@
+# --- Compiled binaries (build them from source) ---
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# --- Go build & test output ---
+*.out
+*.test
+/vendor/
+go.work
+go.work.sum
+
+# --- Runtime data: personal & secret, never commit ---
+calendarr.db
+calendarr.db-shm
+calendarr.db-wal
+# config.json holds qBittorrent / *arr credentials
+config.json
+*.log
+
+# --- Local tooling & secrets ---
+# .claude/launch.json may contain API keys
+.claude/
+
+# --- Design sources (large binaries; keep the exported .png/.svg) ---
+*.psd
+# favicon.zip is a download bundle; extracted into web/ and icon/
+favicon.zip
+
+# --- Installer: intentionally kept out of the public repo ---
+# Delete these lines if you ever want to publish the installer.
+/installer/
+/internal/installer/
+installer.zip
+code.html
+/temp/
+
+# --- OS junk ---
+Thumbs.db
+desktop.ini
+.DS_Store

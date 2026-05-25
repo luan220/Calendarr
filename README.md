@@ -59,7 +59,7 @@ flowchart LR
 
 - **`server.exe`** runs on the machine that hosts Sonarr. It reads Sonarr live, serves the UI + JSON API + WebSocket on **`:8787`**, keeps watched state in `calendarr.db`, and broadcasts a discovery beacon on **`:8786`**.
 - **Any browser** on the LAN opens `http://<that-machine>:8787`.
-- **`client.exe`** runs on each *viewing* machine. It sits in the tray on **`:8788`**; when you click ▶ in the browser it launches **MPC-BE** pointed at the stream URL. The video streams **directly** from the server to the player — it never passes through a third party or the cloud.
+- **`client.exe`** runs on each *viewing* machine (Windows). It sits in the tray on **`:8788`** (loopback only); when you click ▶ in a browser **on that same machine**, it launches **MPC-BE** pointed at the stream URL. The video streams **directly** from the server to the player — it never passes through a third party or the cloud.
 
 ## Requirements
 
@@ -86,8 +86,10 @@ go build -ldflags "-H=windowsgui" -o client.exe ./client
 ## Running it
 
 1. Copy **`server.exe`** to the machine that runs Sonarr and start it. With Sonarr (and optionally Radarr/Prowlarr) on the same box, it auto-detects everything.
-2. Open **`http://<server-machine>:8787`** in any browser on your LAN.
-3. To play something, run **`client.exe`** on the machine you're watching from, then click ▶.
+2. Open **`http://<server-machine>:8787`** in a browser — from any device on your LAN.
+3. **On each PC you want to watch on**, run **`client.exe`** (it lives in the tray). Every viewing machine needs its own copy — whether that's the server itself or a *different* PC on the network — because the browser hands playback to a helper running locally on that same machine. Then click ▶ and the episode opens in MPC-BE, streamed straight from the server.
+
+> **Browsing vs. playing.** *Any* device can open the calendar (phone, tablet, smart TV). But the ▶ button only works on a **Windows PC running `client.exe` + MPC-BE**, because the browser launches the player through a local helper. So you can browse from your phone, then hit play from a PC.
 
 ## Configuration
 
