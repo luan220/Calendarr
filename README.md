@@ -67,7 +67,16 @@ flowchart LR
 - **Windows** — both binaries are system-tray apps.
 - **[Sonarr](https://sonarr.tv)** — the calendar source (required). **[Radarr](https://radarr.video)**, **[Prowlarr](https://prowlarr.com)**, and **[qBittorrent](https://www.qbittorrent.org)** are optional and light up their own pages.
 - **[MPC-BE](https://sourceforge.net/projects/mpcbe/)** on each viewing machine, for playback.
-- **[Go 1.26+](https://go.dev/dl/)** to build from source.
+- **[Go 1.26+](https://go.dev/dl/)** — only if you build from source.
+
+## Download
+
+Grab the prebuilt binaries from the **[latest release](https://github.com/luan220/Calendarr/releases/latest)** — no Go toolchain, no build step:
+
+- **`server.exe`** — runs on the machine that hosts Sonarr. This one alone lets you **browse** the calendar from any device on your LAN (PC, phone, TV).
+- **`client.exe`** — the playback helper for watching from a machine **other than the server**. Run it on each viewing PC so the ▶ button can hand the stream to MPC-BE. If you only browse, you don't need it.
+
+Windows only — both are system-tray apps. Prefer to compile it yourself? See [Build from source](#build-from-source).
 
 ## Build from source
 
