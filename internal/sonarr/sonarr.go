@@ -26,7 +26,7 @@ type Client struct {
 
 // New construit un client. Si baseURL ou apiKey sont vides, on tente de les
 // déduire du config.xml local de Sonarr (cas normal: l'agent tourne sur la
-// machine Sonarr). En dev, on passe des valeurs explicites (BUREAU -> mini-pc).
+// machine Sonarr). En dev, on passe des valeurs explicites (poste dev -> serveur).
 func New(baseURL, apiKey string) (*Client, error) {
 	if baseURL == "" || apiKey == "" {
 		localURL, localKey, err := readLocalConfig()

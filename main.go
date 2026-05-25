@@ -241,7 +241,7 @@ func main() {
 	if *dev {
 		// Mode design : on sert le dossier web/ tel quel depuis le disque.
 		// Éditer un fichier puis rafraîchir le navigateur suffit — aucun rebuild,
-		// aucun renvoi de l'exe sur le mini-pc. Chemin résolu à côté de l'exe
+		// aucun renvoi de l'exe sur le serveur. Chemin résolu à côté de l'exe
 		// (indépendant du dossier de lancement). noCache évite que le navigateur
 		// garde une vieille version du CSS/JS entre deux rafraîchissements.
 		webDir := filepath.Join(filepath.Dir(exePath), "web")

@@ -48,7 +48,7 @@ func main() {
 	}
 
 	http.HandleFunc("/play", func(w http.ResponseWriter, r *http.Request) {
-		// La page est servie depuis le LAN (mini-pc:8787) et appelle ce helper
+		// La page est servie depuis le LAN (serveur:8787) et appelle ce helper
 		// en loopback : Chrome envoie un preflight Private Network Access qu'il
 		// faut autoriser explicitement, sinon le fetch est bloqué.
 		if cors(w, r) {
