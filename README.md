@@ -37,6 +37,7 @@ Think of it as a lightweight, Plex-style front door for the *arr stack you alrea
 - 🔍 **Zero-config auto-detect** — finds Sonarr/Radarr/Prowlarr by reading their own `config.xml`. No API keys to copy by hand.
 - 📡 **LAN auto-discovery** — a UDP beacon means a non-technical user never types an IP: open the helper and the calendar opens itself.
 - 🖥️ **System tray + autostart**, single binary, **fully offline** — CSS, JS, and timezone data are all embedded, no CDN.
+- 🌍 **Multilingual UI** — available in 9 languages (English, French, Spanish, German, Portuguese, Russian, Japanese, Korean, Chinese), auto-detected from the browser and switchable in Options.
 
 ## How it works
 
