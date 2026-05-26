@@ -354,7 +354,7 @@ func runTray(logPath, port string) {
 		// SetOnSecondaryTapped, so right-click keeps the default menu.
 		systray.SetOnTapped(func() { desktop.OpenBrowser("http://localhost:" + port) })
 
-		mAuto := systray.AddMenuItemCheckbox("Start with Windows", "Launch automatically when Windows starts", desktop.AutoStartEnabled(appName))
+		mAuto := systray.AddMenuItemCheckbox("Launch automatically when Windows starts", "Launch automatically when Windows starts", desktop.AutoStartEnabled(appName))
 		mTerm := systray.AddMenuItem("Open terminal", "Show the live server log")
 		systray.AddSeparator()
 		mQuit := systray.AddMenuItem("Quit", "Stop the Calendarr server")

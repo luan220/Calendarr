@@ -100,7 +100,7 @@ func runTray() {
 		systray.SetTooltip("Calendarr — click to open the calendar")
 		systray.SetOnTapped(func() { go openCalendar() }) // left-click
 
-		mAuto := systray.AddMenuItemCheckbox("Start with Windows", "Launch automatically when Windows starts", desktop.AutoStartEnabled(appName))
+		mAuto := systray.AddMenuItemCheckbox("Launch automatically when Windows starts", "Launch automatically when Windows starts", desktop.AutoStartEnabled(appName))
 		systray.AddSeparator()
 		mQuit := systray.AddMenuItem("Quit", "Quit Calendarr")
 
