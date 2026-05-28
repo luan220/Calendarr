@@ -47,9 +47,9 @@ flowchart LR
 
     subgraph LAN["Your home LAN"]
         direction LR
-        SRV["🖥️ server.exe<br/>:8787 · beacon :8786"]
+        SRV["🖥️ calendarr.exe (server mode)<br/>:8787 UI · :8788 helper · beacon :8786"]
         WEB["🌐 Browser<br/>PC"]
-        CLI["▶️ client.exe<br/>:8788 + MPC-BE"]
+        CLI["▶️ calendarr.exe (client mode)<br/>:8788 + MPC-BE"]
     end
 
     ARR -->|reads live| SRV
@@ -59,55 +59,77 @@ flowchart LR
     SRV -.->|direct HTTP range stream| CLI
 ```
 
-- **`server.exe`** runs on the machine that hosts Sonarr. It reads Sonarr live, serves the UI + JSON API + WebSocket on **`:8787`**, keeps watched state in `calendarr.db`, and broadcasts a discovery beacon on **`:8786`**.
+- **`calendarr.exe` in server mode** runs on the machine that hosts Sonarr. It reads Sonarr live, serves the UI + JSON API + WebSocket on **`:8787`**, exposes a loopback playback helper on **`:8788`** (so you can also watch from the server-box itself), keeps watched state in `calendarr.db`, and broadcasts a discovery beacon on **`:8786`**.
 - **Any browser** on the LAN opens `http://<that-machine>:8787`.
-- **`client.exe`** runs on each *viewing* machine (Windows). It sits in the tray on **`:8788`** (loopback only); when you click ▶ in a browser **on that same machine**, it launches **MPC-BE** pointed at the stream URL. The video streams **directly** from the server to the player — it never passes through a third party or the cloud.
+- **`calendarr.exe` in client mode** runs on each *viewing* machine (Windows). It sits in the tray on **`:8788`** (loopback only); when you click ▶ in a browser **on that same machine**, it launches **MPC-BE** pointed at the stream URL. The video streams **directly** from the server to the player — it never passes through a third party or the cloud.
+- **One binary, two modes.** It's the same `calendarr.exe`. Right-click the tray icon → switch between **Mode: Server** and **Mode: Client** (the app restarts itself). The choice is persisted in `config.json`.
 
 ## Requirements
 
-- **Windows** — both binaries are system-tray apps.
+- **Windows** — `calendarr.exe` is a system-tray app.
 - **[Sonarr](https://sonarr.tv)** — the calendar source (required). **[Radarr](https://radarr.video)**, **[Prowlarr](https://prowlarr.com)**, and **[qBittorrent](https://www.qbittorrent.org)** are optional and light up their own pages.
 - **[MPC-BE](https://sourceforge.net/projects/mpcbe/)** on each viewing machine, for playback.
 - **[Go 1.26+](https://go.dev/dl/)** — only if you build from source.
 
 ## Download
 
-Grab the prebuilt binaries from the **[latest release](https://github.com/luan220/Calendarr/releases/latest)** — no Go toolchain, no build step:
+Grab the prebuilt **`calendarr.exe`** from the **[latest release](https://github.com/luan220/Calendarr/releases/latest)** — one file, no Go toolchain, no build step. Same binary on every machine; pick its mode the first time you run it via the tray menu (right-click → **Mode: Server** or **Mode: Client**).
 
-- **`server.exe`** — runs on the machine that hosts Sonarr. This one alone lets you **browse** the calendar from any device on your LAN (PC, phone, TV).
-- **`client.exe`** — the playback helper for watching from a machine **other than the server**. Run it on each viewing PC so the ▶ button can hand the stream to MPC-BE. If you only browse, you don't need it.
-
-Windows only — both are system-tray apps. Prefer to compile it yourself? See [Build from source](#build-from-source).
+Windows only — it's a system-tray app. Prefer to compile it yourself? See [Build from source](#build-from-source).
 
 ## Build from source
 
 ```sh
 git clone https://github.com/<you>/calendarr.git
 cd calendarr
-
-# the server — runs on the box with Sonarr
-go build -ldflags "-H=windowsgui" -o server.exe ./cmd/server
-
-# the playback helper — runs on each viewing machine
-go build -ldflags "-H=windowsgui" -o client.exe ./cmd/client
 ```
 
-`-H=windowsgui` makes the apps run silently in the system tray (no console window). Drop it while developing to keep a console, or run the server with `-notray -dev` to live-reload the `web/` UI without rebuilding.
+**Release build** (Windows PowerShell) — produces the self-contained `bin\calendarr.exe`:
+
+```powershell
+.\build.ps1
+```
+
+`build.ps1` compiles with CGO and the mingw-w64 toolchain, statically linking the C runtime, so the binary has no external DLL dependency beyond the system Universal CRT. One-time toolchain install:
+
+```powershell
+winget install BrechtSanders.WinLibs.POSIX.UCRT
+```
+
+The release binary targets **x86-64-v3** CPUs (Intel Haswell 2013+ / AMD Excavator 2015+); on an older CPU it prints a clear message and exits instead of crashing.
+
+**Quick dev build** — no mingw needed, keeps a console for logs:
+
+```sh
+go build -o calendarr.exe ./cmd/server
+```
+
+Add `-ldflags "-H=windowsgui"` to hide the console (the tray-only mode `build.ps1` ships), or run with `-notray -dev` to live-reload the `web/` UI without rebuilding.
+
+Version info, icon, and Windows manifest are embedded via the committed `cmd/server/rsrc.syso`. To regenerate it after bumping the version in `cmd/server/versioninfo.json`:
+
+```sh
+go install github.com/josephspurrier/goversioninfo/cmd/goversioninfo@latest
+go generate ./cmd/server
+```
 
 ## Running it
 
-1. Copy **`server.exe`** to the machine that runs Sonarr and start it. With Sonarr (and optionally Radarr/Prowlarr) on the same box, it auto-detects everything.
+1. Copy **`calendarr.exe`** to the machine that runs Sonarr and start it. By default it boots in **server mode** and auto-detects Sonarr (and optionally Radarr/Prowlarr/Bazarr/qBittorrent) on the same box.
 2. Open **`http://<server-machine>:8787`** in a browser — from any device on your LAN.
-3. **On each PC you watch from** — typically a machine *other than* the server — run **`client.exe`** (it lives in the tray). The browser hands playback to a helper running locally, so whichever PC you press ▶ on needs its own copy. Then click ▶ and the episode opens in MPC-BE, streamed straight from the server.
+3. **On each PC you watch from** — typically a machine *other than* the server — copy the same `calendarr.exe`, run it once, then right-click the tray icon → **Mode: Client**. The app restarts in client mode (playback helper only, listens on loopback `:8788`). Then click ▶ in the calendar and the episode opens in MPC-BE, streamed straight from the server.
 
-> **Browsing vs. playing.** *Any* device can open the calendar (phone, tablet, smart TV). But the ▶ button only works on a **Windows PC running `client.exe` + MPC-BE**, because the browser launches the player through a local helper. So you can browse from your phone, then hit play from a PC.
+> **One binary, two modes.** Server mode = full calendar + Sonarr/Radarr/etc. + ability to play locally. Client mode = playback helper only, no Sonarr needed. Switch any time via the tray menu — the choice is persisted in `config.json` next to the exe.
+
+> **Browsing vs. playing.** *Any* device can open the calendar (phone, tablet, smart TV). But the ▶ button only works on a **Windows PC running `calendarr.exe` + MPC-BE**, because the browser launches the player through a local helper. So you can browse from your phone, then hit play from a PC.
 
 ## Configuration
 
-Everything auto-detects when the *arr apps live on the same machine as the server. For anything remote — or to set qBittorrent credentials — drop a `config.json` next to `server.exe` (a blank template is written on first run):
+Everything auto-detects when the *arr apps live on the same machine as the server. For anything remote — or to set qBittorrent credentials, or to switch mode by editing the file directly — drop a `config.json` next to `calendarr.exe` (a blank template is written on first run):
 
 ```json
 {
+  "mode": "server",
   "sonarrUrl": "http://localhost:8989",
   "sonarrKey": "",
   "qbitUrl": "http://localhost:9191",
@@ -120,17 +142,11 @@ Everything auto-detects when the *arr apps live on the same machine as the serve
 }
 ```
 
-Command-line flags override the config file — run `server.exe -h` for the full list. Default ports: server `8787`, discovery beacon `8786`, playback helper `8788`.
+Command-line flags override the config file — run `calendarr.exe -h` for the full list. Default ports: server `8787`, discovery beacon `8786`, playback helper `8788` (loopback).
 
 ## Disclaimer
 
 Calendarr is a **controller and viewer** for software you install and run yourself. Like Sonarr, Radarr, and the rest of the *arr ecosystem, it **does not host, provide, or distribute any media** — it only talks to the tools already on your own machines. You are responsible for how you use it and for complying with the laws in your country.
-
-## Antivirus false positives
-
-Calendarr ships as an unsigned Go binary. Like many open-source Go projects on Windows ([golang/go#35775](https://github.com/golang/go/issues/35775)), it can be flagged by a handful of antivirus engines — at last check, **4/71 on VirusTotal**, all from machine-learning heuristics (`Wacatac.B!ml`, `malicious_confidence_*`) rather than real signature matches.
-
-The source is fully public and auditable. If you'd rather not take that on faith, paste the repo into your LLM of choice and ask it to walk through what the binary actually does — it's a quick sanity check. A proper code signature will be added in a future release.
 
 ## Contributing
 

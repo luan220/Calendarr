@@ -3,6 +3,8 @@
 // SQLite. No VPS, no heavy framework, a single binary.
 package main
 
+//go:generate goversioninfo -64 -o rsrc.syso versioninfo.json
+
 import (
 	_ "embed"
 	"encoding/json"
@@ -12,11 +14,13 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	_ "time/tzdata" // embeds the timezone database (Windows does not always ship one)
@@ -24,6 +28,7 @@ import (
 	"fyne.io/systray"
 	"github.com/gorilla/websocket"
 
+	"calendarr-local/internal/bazarr"
 	"calendarr-local/internal/desktop"
 	"calendarr-local/internal/discovery"
 	"calendarr-local/internal/prowlarr"
@@ -41,6 +46,11 @@ var iconBytes []byte
 // auto-start (which launches the exe WITHOUT arguments) to know the qBittorrent
 // credentials, etc. Precedence: command-line argument > config.json > default.
 type config struct {
+	// Mode picks between the full server (Sonarr-connected, calendar UI on
+	// :8787) and the lightweight client (playback helper only). Persisted
+	// across restarts and toggleable from the tray menu. Default: "server".
+	Mode string `json:"mode"`
+
 	SonarrURL   string `json:"sonarrUrl"`
 	SonarrKey   string `json:"sonarrKey"`
 	QbitURL     string `json:"qbitUrl"`
@@ -50,7 +60,21 @@ type config struct {
 	ProwlarrKey string `json:"prowlarrKey"`
 	RadarrURL   string `json:"radarrUrl"`
 	RadarrKey   string `json:"radarrKey"`
+	BazarrURL   string `json:"bazarrUrl"`
+	BazarrKey   string `json:"bazarrKey"`
 }
+
+// Mode values for config.Mode. Kept short so they read naturally inside the
+// JSON file the user can edit by hand if they want.
+const (
+	modeServer = "server"
+	modeClient = "client"
+)
+
+// autostartTaskName is the Windows Task Scheduler entry name used to launch
+// Calendarr at user logon. Single name (regardless of mode) because the same
+// binary serves both modes — mode is read from config.json at startup.
+const autostartTaskName = "Calendarr"
 
 // loadConfig reads config.json. If it does not exist, writes an empty template
 // to fill in (without ever touching an existing file).
@@ -88,6 +112,7 @@ type server struct {
 	qb  *qbit.Client
 	pr  *prowlarr.Client
 	rd  *radarr.Client
+	bz  *bazarr.Client
 
 	shareURL  string // LAN access address to display for sharing (http://PC-NAME:port)
 	sonarrWeb string // Sonarr URL reachable from the LAN (for series links)
@@ -99,10 +124,16 @@ type server struct {
 
 	mu    sync.Mutex
 	queue map[int]queueProg // episodeId -> progress of the active download
+
+	setupMu    sync.Mutex
+	setupState map[string]string // auto-setup outcomes the UI may act on, e.g. "sonarr.downloadClient" -> "auth-failed"
 }
 
 func main() {
-	addr := flag.String("addr", ":8787", "HTTP listen address")
+	mode := flag.String("mode", "", "server | client (overrides config.json; default: server)")
+	addr := flag.String("addr", ":8787", "HTTP listen address (server mode)")
+	helperAddr := flag.String("client-addr", "127.0.0.1:8788", "playback helper address (loopback only)")
+	mpc := flag.String("mpc", "", "MPC-BE path (empty = auto-detect)")
 	sonarrURL := flag.String("sonarr-url", "", "Sonarr URL (empty = auto-detect via config.xml)")
 	sonarrKey := flag.String("sonarr-key", "", "Sonarr API key (empty = auto-detect)")
 	dbPath := flag.String("db", "", "path to the SQLite file (default: next to the exe)")
@@ -113,6 +144,8 @@ func main() {
 	prowlarrKey := flag.String("prowlarr-key", "", "Prowlarr API key (empty = auto-detect)")
 	radarrURL := flag.String("radarr-url", "", "Radarr URL (empty = auto-detect via config.xml)")
 	radarrKey := flag.String("radarr-key", "", "Radarr API key (empty = auto-detect)")
+	bazarrURL := flag.String("bazarr-url", "", "Bazarr URL (empty = auto-detect via config.ini)")
+	bazarrKey := flag.String("bazarr-key", "", "Bazarr API key (empty = auto-detect)")
 	notray := flag.Bool("notray", false, "do not create a notification-area icon (dev/preview)")
 	dev := flag.Bool("dev", false, "serve web/ from disk (hot-reload the design without rebuilding)")
 	open := flag.Bool("open", false, "open the interface in the browser (used by the desktop shortcut)")
@@ -121,13 +154,30 @@ func main() {
 	// No console (build -H=windowsgui), so we log to a file next to the exe,
 	// viewable via "Open terminal" in the tray menu.
 	exePath, _ := os.Executable()
-	logPath := filepath.Join(filepath.Dir(exePath), "server.log")
+	logPath := filepath.Join(filepath.Dir(exePath), "calendarr.log")
 	if lf, e := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644); e == nil {
 		log.SetOutput(lf)
 	}
 
 	cfgPath := filepath.Join(filepath.Dir(exePath), "config.json")
 	cfg := loadConfig(cfgPath)
+
+	// Mode dispatch: -mode flag wins, otherwise read from config, otherwise
+	// default to server. The client mode is a different runtime path — it
+	// returns from main() entirely, none of the server setup below runs.
+	// The user can flip mode any time from the tray menu (Mode: Server /
+	// Mode: Client) — a single click restarts the app in the chosen mode.
+	effectiveMode := modeServer
+	if cfg.Mode == modeClient {
+		effectiveMode = modeClient
+	}
+	if *mode == modeServer || *mode == modeClient {
+		effectiveMode = *mode
+	}
+	if effectiveMode == modeClient {
+		runClientMode(*helperAddr, *mpc, logPath, cfgPath, cfg, *notray)
+		return
+	}
 	flagSet := map[string]bool{}
 	flag.Visit(func(f *flag.Flag) { flagSet[f.Name] = true })
 	// pick: explicit argument > value from config.json > flag default.
@@ -200,6 +250,14 @@ func main() {
 		log.Printf("Radarr: %s", rd.BaseURL)
 	}
 
+	bz, err := bazarr.New(pick("bazarr-url", *bazarrURL, cfg.BazarrURL), pick("bazarr-key", *bazarrKey, cfg.BazarrKey))
+	if err != nil {
+		log.Printf("Bazarr not detected (Subtitles page unavailable): %v", err)
+		bz = nil
+	} else {
+		log.Printf("Bazarr: %s", bz.BaseURL)
+	}
+
 	// Share address: the Windows PC name (already assigned by the OS) plus the
 	// port. On a LAN, other machines resolve this name on their own
 	// (NetBIOS/mDNS), so the host has nothing to configure, just to share this line.
@@ -233,7 +291,7 @@ func main() {
 		}
 	}
 
-	srv := &server{sc: sc, st: st, loc: loc, hub: newHub(), qb: qb, pr: pr, rd: rd, queue: map[int]queueProg{}, shareURL: shareURL, sonarrWeb: sonarrWeb, radarrWeb: radarrWeb, qbitDet: qbitDet, qbitURL: qbitURLv, cfgPath: cfgPath}
+	srv := &server{sc: sc, st: st, loc: loc, hub: newHub(), qb: qb, pr: pr, rd: rd, bz: bz, queue: map[int]queueProg{}, shareURL: shareURL, sonarrWeb: sonarrWeb, radarrWeb: radarrWeb, qbitDet: qbitDet, qbitURL: qbitURLv, cfgPath: cfgPath, setupState: map[string]string{}}
 
 	if *dev {
 		// Design mode: serve the web/ folder as-is from disk.
@@ -245,9 +303,12 @@ func main() {
 		log.Printf("DEV MODE: web/ served from disk (%s)", webDir)
 		http.Handle("/", noCache(http.FileServer(http.Dir(webDir))))
 	} else {
-		http.Handle("/", http.FileServer(http.FS(web.FS)))
+		// no-cache also in prod: tiny LAN app, no perf concern, and it spares
+		// the user a hard-refresh after every server.exe redeploy.
+		http.Handle("/", noCache(http.FileServer(http.FS(web.FS))))
 	}
 	http.HandleFunc("/api/status", srv.handleStatus)
+	http.HandleFunc("/api/setup/status", srv.handleSetupStatus)
 	// Sonarr routes: guarded by needSonarr, returning a clean 503 if Sonarr is
 	// absent (instead of crashing). The UI relies on /api/status to display a
 	// "Sonarr not installed" message rather than calling these routes.
@@ -270,6 +331,10 @@ func main() {
 	http.HandleFunc("/api/prowlarr/sync", srv.handleProwlarrSync)
 	http.HandleFunc("/api/prowlarr/schema", srv.handleProwlarrSchema)
 	http.HandleFunc("/api/prowlarr/add", srv.handleProwlarrAdd)
+	http.HandleFunc("/api/bazarr/overview", srv.handleBazarrOverview)
+	http.HandleFunc("/api/bazarr/episode/subs", srv.handleBazarrEpisodeSubs)
+	http.HandleFunc("/api/bazarr/episode/search", srv.handleBazarrEpisodeSearch)
+	http.HandleFunc("/api/bazarr/episode/download", srv.handleBazarrEpisodeDownload)
 	http.HandleFunc("/api/films", srv.handleFilms)
 	http.HandleFunc("/api/films/search", srv.handleFilmsSearch)
 	http.HandleFunc("/api/films/grab", srv.handleFilmsGrab)
@@ -287,6 +352,9 @@ func main() {
 		go srv.pollQueue()
 		go srv.registerWebhook(*addr)
 	}
+	// Best-effort: wire qBittorrent into Sonarr/Radarr if they have no download
+	// client yet (checks service nils + qBit detection internally).
+	go srv.autoSetup()
 	go func() {
 		// Continuous LAN beacon: lets client.exe (on another PC) find this
 		// server on its own and open the calendar.
@@ -313,7 +381,14 @@ func main() {
 		}
 	}()
 
-	log.Printf("server ready: http://localhost%s", *addr)
+	// Playback helper on loopback: lets the browser running on THIS machine
+	// click ▶ and have MPC-BE open the stream. In client mode this is the
+	// only listener; in server mode it sits alongside the main UI on :8787.
+	if _, err := startPlayHelper(*helperAddr, *mpc); err != nil {
+		log.Printf("playback helper not started (%s already in use): %v", *helperAddr, err)
+	}
+
+	log.Printf("Calendarr server ready: http://localhost%s", *addr)
 	if shareURL != "" {
 		log.Printf("LAN share (give this to others): %s", shareURL)
 	}
@@ -324,7 +399,7 @@ func main() {
 	if *notray {
 		select {} // dev/preview mode: no icon, block here
 	}
-	runTray(logPath, port)
+	runTray(logPath, port, cfgPath, cfg)
 }
 
 // noCache disables browser caching (-dev mode only) so every refresh reflects
@@ -343,19 +418,22 @@ func fatal(msg string) {
 	os.Exit(1)
 }
 
-// runTray installs the system-tray icon. Left-click opens the calendar in the
-// browser; right-click shows the menu (auto-start, terminal, close).
-func runTray(logPath, port string) {
-	const appName = "CalendarrServer"
-	_ = desktop.RefreshAutoStart(appName)
+// runTray installs the system-tray icon for server mode. Left-click opens
+// the calendar in the browser; right-click shows the menu (mode toggle,
+// auto-start, terminal, close).
+func runTray(logPath, port, cfgPath string, cfg config) {
+	_ = desktop.RefreshAutoStart(autostartTaskName)
 	onReady := func() {
 		systray.SetIcon(iconBytes)
 		systray.SetTooltip("Calendarr — server (click to open the calendar)")
-		// Left-click opens the local UI (like client.exe). We do not set
-		// SetOnSecondaryTapped, so right-click keeps the default menu.
+		// Left-click opens the local UI. We do not set SetOnSecondaryTapped,
+		// so right-click keeps the default menu.
 		systray.SetOnTapped(func() { desktop.OpenBrowser("http://localhost:" + port) })
 
-		mAuto := systray.AddMenuItemCheckbox("Launch automatically when Windows starts", "Launch automatically when Windows starts", desktop.AutoStartEnabled(appName))
+		mModeServer := systray.AddMenuItemCheckbox("Mode: Server", "Full Sonarr-connected calendar (current mode)", true)
+		mModeClient := systray.AddMenuItemCheckbox("Mode: Client", "Switch to client mode (playback helper only)", false)
+		systray.AddSeparator()
+		mAuto := systray.AddMenuItemCheckbox("Launch automatically when Windows starts", "Launch automatically when Windows starts", desktop.AutoStartEnabled(autostartTaskName))
 		mTerm := systray.AddMenuItem("Open terminal", "Show the live server log")
 		systray.AddSeparator()
 		mQuit := systray.AddMenuItem("Quit", "Stop the Calendarr server")
@@ -363,9 +441,14 @@ func runTray(logPath, port string) {
 		go func() {
 			for {
 				select {
+				case <-mModeServer.ClickedCh:
+					// already in server mode — no-op (keep checkbox checked)
+					mModeServer.Check()
+				case <-mModeClient.ClickedCh:
+					switchModeAndRestart(cfgPath, cfg, modeClient)
 				case <-mAuto.ClickedCh:
 					enable := !mAuto.Checked()
-					if err := desktop.SetAutoStart(appName, enable); err != nil {
+					if err := desktop.SetAutoStart(autostartTaskName, enable); err != nil {
 						desktop.MessageBox("Calendarr", "Auto-start: "+err.Error())
 						continue
 					}
@@ -384,6 +467,37 @@ func runTray(logPath, port string) {
 		}()
 	}
 	systray.Run(onReady, func() { os.Exit(0) })
+}
+
+// switchModeAndRestart writes the new mode to config.json, spawns a fresh
+// instance of the binary, and exits the current process. The child process
+// re-reads config.json at startup and boots in the chosen mode. The brief
+// gap during the swap is handled by bindWithRetry on the child side.
+func switchModeAndRestart(cfgPath string, cfg config, newMode string) {
+	cfg.Mode = newMode
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		desktop.MessageBox("Calendarr", "Mode switch failed: "+err.Error())
+		return
+	}
+	if err := os.WriteFile(cfgPath, data, 0o644); err != nil {
+		desktop.MessageBox("Calendarr", "Mode switch failed: "+err.Error())
+		return
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		desktop.MessageBox("Calendarr", "Mode switch failed: "+err.Error())
+		return
+	}
+	cmd := exec.Command(exe)
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: 0x00000008} // DETACHED_PROCESS
+	if err := cmd.Start(); err != nil {
+		desktop.MessageBox("Calendarr", "Mode switch failed: "+err.Error())
+		return
+	}
+	log.Printf("switching to %s mode — restarting", newMode)
+	systray.Quit()
+	os.Exit(0)
 }
 
 // needSonarr wraps a handler that depends on Sonarr: if Sonarr was not
@@ -407,6 +521,7 @@ func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		"sonarr":   s.sc != nil,
 		"radarr":   s.rd != nil,
 		"prowlarr": s.pr != nil,
+		"bazarr":   s.bz != nil,
 	})
 }
 
@@ -464,6 +579,7 @@ func (s *server) handleCalendar(w http.ResponseWriter, r *http.Request) {
 		ep := map[string]any{
 			"id":           e.ID,
 			"episodeId":    e.ID,
+			"seriesId":     e.Series.ID,
 			"series":       e.Series.Title,
 			"seriesSlug":   e.Series.TitleSlug,
 			"season":       e.SeasonNumber,
@@ -683,6 +799,9 @@ func (s *server) handleQbitConnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.saveQbitConfig(s.qbitURL, user, body.Password)
+	// Password now known: retry wiring qBittorrent into Sonarr/Radarr in case
+	// the startup attempt failed on authentication.
+	go s.autoSetup()
 	writeJSON(w, map[string]any{"connected": true})
 }
 
@@ -1063,6 +1182,138 @@ func (s *server) handleProwlarrToggle(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.pr.SetEnabled(body.ID, body.Enable); err != nil {
 		http.Error(w, "Prowlarr: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true})
+}
+
+// --- Bazarr ---
+
+// handleBazarrOverview aggregates everything the Subtitles page needs in one
+// shot: missing subs (episodes + movies), recent history, providers status and
+// configured languages. Each sub-call is best-effort: a failure on one section
+// does not blank the rest.
+func (s *server) handleBazarrOverview(w http.ResponseWriter, r *http.Request) {
+	if s.bz == nil {
+		http.Error(w, "Bazarr not configured", http.StatusServiceUnavailable)
+		return
+	}
+	out := map[string]any{}
+	if eps, total, err := s.bz.WantedEpisodes(100); err == nil {
+		out["wantedEpisodes"] = eps
+		out["wantedEpisodesTotal"] = total
+	} else {
+		out["wantedEpisodesError"] = err.Error()
+	}
+	if mvs, total, err := s.bz.WantedMovies(100); err == nil {
+		out["wantedMovies"] = mvs
+		out["wantedMoviesTotal"] = total
+	} else {
+		out["wantedMoviesError"] = err.Error()
+	}
+	if h, err := s.bz.HistoryEpisodes(25); err == nil {
+		out["historyEpisodes"] = h
+	}
+	if h, err := s.bz.HistoryMovies(25); err == nil {
+		out["historyMovies"] = h
+	}
+	if p, err := s.bz.Providers(); err == nil {
+		out["providers"] = p
+	}
+	if l, err := s.bz.Languages(true); err == nil {
+		out["languages"] = l
+	}
+	writeJSON(w, out)
+}
+
+// handleBazarrEpisodeSubs lists subtitle tracks already present on disk for
+// one episode. Fast (single Bazarr call). Used by the modal to show what the
+// user already has before they decide to search for more.
+func (s *server) handleBazarrEpisodeSubs(w http.ResponseWriter, r *http.Request) {
+	if s.bz == nil {
+		http.Error(w, "Bazarr not configured", http.StatusServiceUnavailable)
+		return
+	}
+	seriesID := atoiDefault(r.URL.Query().Get("seriesId"), 0)
+	episodeID := atoiDefault(r.URL.Query().Get("episodeId"), 0)
+	if seriesID == 0 || episodeID == 0 {
+		http.Error(w, "seriesId and episodeId required", http.StatusBadRequest)
+		return
+	}
+	subs, err := s.bz.EpisodeSubtitles(seriesID, episodeID)
+	if err != nil {
+		http.Error(w, "Bazarr: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	writeJSON(w, map[string]any{"subtitles": subs})
+}
+
+// handleBazarrEpisodeSearch triggers Bazarr's manual subtitle search for one
+// episode. Slow (10-30s, sometimes more): we keep the response open while
+// Bazarr queries every configured provider in parallel.
+func (s *server) handleBazarrEpisodeSearch(w http.ResponseWriter, r *http.Request) {
+	if s.bz == nil {
+		http.Error(w, "Bazarr not configured", http.StatusServiceUnavailable)
+		return
+	}
+	episodeID := atoiDefault(r.URL.Query().Get("episodeId"), 0)
+	if episodeID == 0 {
+		http.Error(w, "episodeId required", http.StatusBadRequest)
+		return
+	}
+	results, err := s.bz.SearchEpisodeSubtitles(episodeID)
+	if err != nil {
+		http.Error(w, "Bazarr: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	// Echo each result's raw payload back so the client can return it
+	// verbatim in the download call. Bazarr validates against original fields.
+	out := make([]map[string]any, 0, len(results))
+	for _, r := range results {
+		raw := r.Raw
+		if raw == nil {
+			raw = map[string]any{
+				"language":         r.Language,
+				"provider":         r.Provider,
+				"subtitle":         r.Subtitle,
+				"score":            r.Score,
+				"hearing_impaired": r.HearingImpaired,
+				"forced":           r.Forced,
+				"url":              r.URL,
+			}
+		}
+		out = append(out, raw)
+	}
+	writeJSON(w, map[string]any{"results": out})
+}
+
+// handleBazarrEpisodeDownload triggers Bazarr to actually fetch one subtitle
+// and place the file next to the video. Body: {seriesId, episodeId, sub: {...}}
+// where sub is the raw payload from the search response.
+func (s *server) handleBazarrEpisodeDownload(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.bz == nil {
+		http.Error(w, "Bazarr not configured", http.StatusServiceUnavailable)
+		return
+	}
+	var body struct {
+		SeriesID  int            `json:"seriesId"`
+		EpisodeID int            `json:"episodeId"`
+		Sub       map[string]any `json:"sub"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+	if body.SeriesID == 0 || body.EpisodeID == 0 || body.Sub == nil {
+		http.Error(w, "seriesId, episodeId and sub required", http.StatusBadRequest)
+		return
+	}
+	if err := s.bz.DownloadEpisodeSubtitle(body.SeriesID, body.EpisodeID, body.Sub); err != nil {
+		http.Error(w, "Bazarr: "+err.Error(), http.StatusBadGateway)
 		return
 	}
 	writeJSON(w, map[string]any{"ok": true})

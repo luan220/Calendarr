@@ -111,6 +111,7 @@ type Episode struct {
 	HasFile       bool   `json:"hasFile"`
 	Monitored     bool   `json:"monitored"`
 	Series        struct {
+		ID            int      `json:"id"`
 		Title         string   `json:"title"`
 		TitleSlug     string   `json:"titleSlug"`
 		TvdbID        int      `json:"tvdbId"`
@@ -294,6 +295,20 @@ func (c *Client) EnsureWebhook(name, callbackURL string) (bool, error) {
 		return false, err
 	}
 	return true, nil
+}
+
+// DownloadClientCount returns how many download clients are configured, so a
+// caller can avoid touching an instance the user has already set up.
+func (c *Client) DownloadClientCount() (int, error) {
+	b, err := c.apiGet("/api/v3/downloadclient")
+	if err != nil {
+		return 0, err
+	}
+	var arr []map[string]any
+	if err := json.Unmarshal(b, &arr); err != nil {
+		return 0, err
+	}
+	return len(arr), nil
 }
 
 // AddDownloadClient declares qBittorrent as a download client in Sonarr

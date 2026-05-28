@@ -1,0 +1,29 @@
+{
+  "FixedFileInfo": {
+    "FileVersion":    { "Major": 1, "Minor": 1, "Patch": 0, "Build": 0 },
+    "ProductVersion": { "Major": 1, "Minor": 1, "Patch": 0, "Build": 0 },
+    "FileFlagsMask": "3f",
+    "FileFlags ":    "00",
+    "FileOS":        "040004",
+    "FileType":      "01",
+    "FileSubType":   "00"
+  },
+  "StringFileInfo": {
+    "Comments":         "Open-source self-hosted calendar and remote for the *arr media stack. Source: https://github.com/luan220/Calendarr",
+    "CompanyName":      "Calendarr",
+    "FileDescription":  "Calendarr — calendar and remote for the *arr media stack",
+    "FileVersion":      "1.1.0.0",
+    "InternalName":     "calendarr",
+    "LegalCopyright":   "Copyright (C) 2026 Calendarr contributors. Licensed under GPL-3.0.",
+    "LegalTrademarks":  "Calendarr is an independent project and is not affiliated with Sonarr, Radarr, Prowlarr, Bazarr, qBittorrent, or Microsoft.",
+    "OriginalFilename": "calendarr.exe",
+    "PrivateBuild":     "Built from source. See https://github.com/luan220/Calendarr for the recipe.",
+    "ProductName":      "Calendarr",
+    "ProductVersion":   "1.1.0.0"
+  },
+  "VarFileInfo": {
+    "Translation": { "LangID": "0409", "CharsetID": "04B0" }
+  },
+  "IconPath":     "icon.ico",
+  "ManifestPath": "calendarr.manifest"
+}
