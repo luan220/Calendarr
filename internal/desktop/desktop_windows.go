@@ -2,8 +2,8 @@
 
 // Package desktop provides small Windows utilities for desktop integration:
 // auto-start (via the Task Scheduler COM API — no schtasks.exe spawn),
-// opening the browser via ShellExecute, opening a terminal that tails the
-// log, and an error message box (useful when the app has no console).
+// opening the browser via ShellExecute, and an error message box (useful
+// when the app has no console).
 //
 // Every Win32 call goes through the documented golang.org/x/sys/windows or
 // github.com/go-ole/go-ole interfaces (static imports, COM via ole32) — no
@@ -14,8 +14,6 @@ package desktop
 import (
 	"errors"
 	"os"
-	"os/exec"
-	"strings"
 	"syscall"
 
 	"github.com/go-ole/go-ole"
@@ -70,22 +68,6 @@ func OpenBrowser(url string) {
 	verb, _ := syscall.UTF16PtrFromString("open")
 	file, _ := syscall.UTF16PtrFromString(url)
 	_ = windows.ShellExecute(0, verb, file, nil, nil, windows.SW_SHOWNORMAL)
-}
-
-// OpenTerminal opens a PowerShell window that tails the log live. The script
-// is passed inline via -Command (no .ps1 on disk, no ExecutionPolicy flag).
-func OpenTerminal(logPath string) {
-	p := strings.ReplaceAll(logPath, "'", "''")
-	script := "$Host.UI.RawUI.WindowTitle = 'Calendarr - server log';" +
-		"[Console]::OutputEncoding = [Text.Encoding]::UTF8;" +
-		"$log = '" + p + "';" +
-		"Write-Host '=== Calendarr log (live, Ctrl+C to close) ===' -ForegroundColor Cyan;" +
-		"Write-Host $log -ForegroundColor DarkGray;" +
-		"while (-not (Test-Path -LiteralPath $log)) { Write-Host 'Waiting for the log...' -ForegroundColor Yellow; Start-Sleep -Seconds 1 };" +
-		"Get-Content -LiteralPath $log -Tail 500 -Wait -Encoding UTF8"
-	cmd := exec.Command("powershell.exe", "-NoExit", "-NoLogo", "-NoProfile", "-Command", script)
-	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: 0x00000010} // CREATE_NEW_CONSOLE
-	_ = cmd.Start()
 }
 
 // MessageBox displays a native error dialog. user32!MessageBoxW is imported

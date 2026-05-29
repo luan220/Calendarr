@@ -20,7 +20,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	_ "time/tzdata" // embeds the timezone database (Windows does not always ship one)
@@ -148,13 +147,7 @@ func main() {
 	open := flag.Bool("open", false, "open the interface in the browser (used by the desktop shortcut)")
 	flag.Parse()
 
-	// No console (build -H=windowsgui), so we log to a file next to the exe,
-	// viewable via "Open terminal" in the tray menu.
 	exePath, _ := os.Executable()
-	logPath := filepath.Join(filepath.Dir(exePath), "calendarr.log")
-	if lf, e := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644); e == nil {
-		log.SetOutput(lf)
-	}
 
 	cfgPath := filepath.Join(filepath.Dir(exePath), "config.json")
 	cfg := loadConfig(cfgPath)
@@ -172,7 +165,7 @@ func main() {
 		effectiveMode = *mode
 	}
 	if effectiveMode == modeClient {
-		runClientMode(*helperAddr, *mpc, logPath, cfgPath, cfg, *notray)
+		runClientMode(*helperAddr, *mpc, cfgPath, cfg, *notray)
 		return
 	}
 	flagSet := map[string]bool{}
@@ -392,7 +385,7 @@ func main() {
 	if *notray {
 		select {} // dev/preview mode: no icon, block here
 	}
-	runTray(logPath, port, cfgPath, cfg)
+	runTray(port, cfgPath, cfg)
 }
 
 // noCache disables browser caching (-dev mode only) so every refresh reflects
@@ -413,8 +406,8 @@ func fatal(msg string) {
 
 // runTray installs the system-tray icon for server mode. Left-click opens
 // the calendar in the browser; right-click shows the menu (mode toggle,
-// auto-start, terminal, close).
-func runTray(logPath, port, cfgPath string, cfg config) {
+// auto-start, close).
+func runTray(port, cfgPath string, cfg config) {
 	_ = desktop.RefreshAutoStart(autostartTaskName)
 	onReady := func() {
 		systray.SetIcon(iconBytes)
@@ -427,7 +420,6 @@ func runTray(logPath, port, cfgPath string, cfg config) {
 		mModeClient := systray.AddMenuItemCheckbox("Mode: Client", "Switch to client mode (playback helper only)", false)
 		systray.AddSeparator()
 		mAuto := systray.AddMenuItemCheckbox("Launch automatically when Windows starts", "Launch automatically when Windows starts", desktop.AutoStartEnabled(autostartTaskName))
-		mTerm := systray.AddMenuItem("Open terminal", "Show the live server log")
 		systray.AddSeparator()
 		mQuit := systray.AddMenuItem("Quit", "Stop the Calendarr server")
 
@@ -450,8 +442,6 @@ func runTray(logPath, port, cfgPath string, cfg config) {
 					} else {
 						mAuto.Uncheck()
 					}
-				case <-mTerm.ClickedCh:
-					desktop.OpenTerminal(logPath)
 				case <-mQuit.ClickedCh:
 					systray.Quit()
 					return
@@ -482,8 +472,11 @@ func switchModeAndRestart(cfgPath string, cfg config, newMode string) {
 		desktop.MessageBox("Calendarr", "Mode switch failed: "+err.Error())
 		return
 	}
+	// Plain spawn: under -H=windowsgui there is no console to hide or detach
+	// from, and the child outlives this process on its own. Avoiding
+	// HideWindow / DETACHED_PROCESS keeps the relaunch from resembling a
+	// dropper to antivirus heuristics.
 	cmd := exec.Command(exe)
-	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: 0x00000008} // DETACHED_PROCESS
 	if err := cmd.Start(); err != nil {
 		desktop.MessageBox("Calendarr", "Mode switch failed: "+err.Error())
 		return

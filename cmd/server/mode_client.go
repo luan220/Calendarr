@@ -17,7 +17,7 @@ import (
 	"calendarr-local/internal/discovery"
 )
 
-func runClientMode(addr, mpc, logPath, cfgPath string, cfg config, notray bool) {
+func runClientMode(addr, mpc, cfgPath string, cfg config, notray bool) {
 	if _, err := startPlayHelper(addr, mpc); err != nil {
 		desktop.MessageBox("Calendarr", "Calendarr is already running on this machine.")
 		return
@@ -26,13 +26,13 @@ func runClientMode(addr, mpc, logPath, cfgPath string, cfg config, notray bool) 
 	if notray {
 		select {} // dev/preview: block here, no tray
 	}
-	runClientTray(addr, logPath, cfgPath, cfg)
+	runClientTray(addr, cfgPath, cfg)
 }
 
 // runClientTray installs the system-tray icon for client mode. Left-click
 // opens the calendar (auto-discovers a server on the LAN); right-click shows
 // the menu (mode toggle, auto-start, quit).
-func runClientTray(helperAddr, logPath, cfgPath string, cfg config) {
+func runClientTray(helperAddr, cfgPath string, cfg config) {
 	onReady := func() {
 		systray.SetIcon(iconBytes)
 		systray.SetTooltip("Calendarr (client) — click to open the calendar")
@@ -42,7 +42,6 @@ func runClientTray(helperAddr, logPath, cfgPath string, cfg config) {
 		mModeClient := systray.AddMenuItemCheckbox("Mode: Client", "Playback helper only (current mode)", true)
 		systray.AddSeparator()
 		mAuto := systray.AddMenuItemCheckbox("Launch automatically when Windows starts", "Launch automatically when Windows starts", desktop.AutoStartEnabled(autostartTaskName))
-		mTerm := systray.AddMenuItem("Open terminal", "Show the live log")
 		systray.AddSeparator()
 		mQuit := systray.AddMenuItem("Quit", "Quit Calendarr")
 
@@ -67,8 +66,6 @@ func runClientTray(helperAddr, logPath, cfgPath string, cfg config) {
 					} else {
 						mAuto.Uncheck()
 					}
-				case <-mTerm.ClickedCh:
-					desktop.OpenTerminal(logPath)
 				case <-mQuit.ClickedCh:
 					systray.Quit()
 					return
