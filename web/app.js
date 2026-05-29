@@ -38,12 +38,14 @@ const app = createApp({
             // Service availability (populated by /api/status). Defaults to true so
             // nothing is hidden while the status is still loading. (qBittorrent is
             // not listed here: the Torrents page relies directly on /api/torrents.)
-            services: { sonarr: true, radarr: true, prowlarr: true },
+            services: { sonarr: true, radarr: true, prowlarr: true, bazarr: true },
+            setupStatus: null, setupActions: [],
             tabs: [
                 { id: 'calendar', key: 'nav_calendar' },
                 { id: 'films', key: 'nav_films' },
                 { id: 'torrents', key: 'nav_torrents' },
                 { id: 'prowlarr', key: 'nav_prowlarr' },
+                { id: 'subtitles', key: 'nav_subtitles' },
             ],
             lang: (window.detectLocale ? window.detectLocale() : 'en'),
             langs: (window.LANGS || []),
@@ -56,6 +58,8 @@ const app = createApp({
             schemaList: null, schemaQuery: '', schemaOpen: false, addingIndexer: '',
             films: [], filmsLoading: false, filmsError: '', radarrUrl: '',
             selectedFilm: null, filmReleases: null, filmSearching: false, filmGrabbed: {},
+            bazarrLoading: false, bazarrError: '', bazarrData: null,
+            showSubs: false, epSubsLoading: false, epSubsCurrent: null, epSubsSearching: false, epSubsResults: null, epSubDownloading: {},
             progress: {}, liveProgress: false, ws: null,
         };
     },
@@ -192,6 +196,33 @@ const app = createApp({
                 if (r.ok) Object.assign(this.services, await r.json());
             } catch (e) {}
         },
+        async loadSetupStatus() {
+            try {
+                const r = await fetch('/api/setup/status');
+                if (!r.ok) return;
+                this.setupStatus = await r.json();
+                this.buildSetupActions();
+            } catch (e) {}
+        },
+        buildSetupActions() {
+            // Read-only guidance only: detect gaps and point the user to the
+            // right *arr settings page. Calendarr never writes to Sonarr/Radarr
+            // here (that pattern trips antivirus heuristics).
+            const st = this.setupStatus;
+            const actions = [];
+            if (st) {
+                const qbit = st.qbit || {};
+                for (const svc of ['sonarr', 'radarr']) {
+                    const s = st[svc];
+                    if (!s || !s.configured) continue;
+                    const name = svc === 'sonarr' ? 'Sonarr' : 'Radarr';
+                    if (s.needsDownloadClient) actions.push({ id: 'dl-' + svc, kind: 'downloadclient', name, qbit, url: s.url ? s.url + '/settings/downloadclients' : '' });
+                    if (s.needsRootFolder) actions.push({ id: 'rf-' + svc, kind: 'rootfolder', name, url: s.url ? s.url + '/settings/mediamanagement' : '' });
+                }
+            }
+            this.setupActions = actions;
+        },
+        openExternal(url) { if (url) window.open(url, '_blank', 'noopener'); },
         fmtGB(bytes) {
             const gb = (bytes || 0) / 1073741824;
             return gb >= 1024 ? (gb / 1024).toFixed(2) + ' To' : gb.toFixed(1) + ' Go';
@@ -226,6 +257,7 @@ const app = createApp({
             if (id === 'torrents') this.loadTorrents();
             else if (id === 'prowlarr') this.loadProwlarr();
             else if (id === 'films') this.loadFilms();
+            else if (id === 'subtitles') this.loadBazarr();
         },
         goHome() {
             this.view = 'calendar';
@@ -235,9 +267,11 @@ const app = createApp({
             this.selected = ep;
             this.releases = null; this.searching = false; this.grabbed = {};
             this.showTorrents = false; this.relQuery = ''; this.relQuality = 'All'; this.relSort = 'seeds';
+            this.showSubs = false; this.epSubsCurrent = null; this.epSubsResults = null; this.epSubDownloading = {};
         },
-        closeModal() { this.selected = null; this.showTorrents = false; },
+        closeModal() { this.selected = null; this.showTorrents = false; this.showSubs = false; },
         closeTorrentsPanel() { this.showTorrents = false; },
+        closeSubsPanel() { this.showSubs = false; },
         fmtSize(b) {
             if (!b) return '—';
             const gb = b / 1e9;
@@ -254,6 +288,28 @@ const app = createApp({
             if (n >= 20) return 'seed-hi';
             if (n >= 5) return 'seed-mid';
             return 'seed-lo';
+        },
+        // parseLangs detects audio/subtitle hints in a release title. Used to
+        // show colored badges so the user can pick a release matching their
+        // language needs without opening every NFO.
+        parseLangs(title) {
+            if (!title) return [];
+            const out = [];
+            const t = title.toUpperCase();
+            // Token surrounded by typical release-name separators (. - _ space brackets)
+            const has = (token) => new RegExp(`(^|[\\s._\\-\\[\\(])${token}([\\s._\\-\\]\\)]|$)`).test(t);
+            // Audio (one badge, most specific wins)
+            if (has('MULTI') || has('MULTi') || /\bMULTI\d/i.test(title)) out.push({ label: 'MULTI', cls: 'lang-multi' });
+            else if (has('TRUEFRENCH')) out.push({ label: 'TRUEFRENCH', cls: 'lang-fr' });
+            else if (has('FRENCH')) out.push({ label: 'FR', cls: 'lang-fr' });
+            else if (has('VFF')) out.push({ label: 'VFF', cls: 'lang-fr' });
+            else if (has('VFI')) out.push({ label: 'VFI', cls: 'lang-fr' });
+            else if (has('VFQ')) out.push({ label: 'VFQ', cls: 'lang-fr' });
+            else if (has('VF')) out.push({ label: 'VF', cls: 'lang-fr' });
+            // Subtitles (separate badge, can coexist with audio badge)
+            if (has('VOSTFR')) out.push({ label: 'VOSTFR', cls: 'lang-vostfr' });
+            else if (has('VOST')) out.push({ label: 'VOST', cls: 'lang-vostfr' });
+            return out;
         },
         async searchTorrents() {
             if (!this.selected) return;
@@ -424,7 +480,7 @@ const app = createApp({
                     body: JSON.stringify({ username: this.qbitUserInput, password: this.qbitPass }),
                 });
                 const d = await r.json();
-                if (d.connected) { this.qbitPass = ''; this.qbitMsg = ''; await this.loadTorrents(); }
+                if (d.connected) { this.qbitPass = ''; this.qbitMsg = ''; await this.loadTorrents(); setTimeout(() => this.loadSetupStatus(), 1500); }
                 else { this.qbitMsg = d.banned ? this.t('qbit_banned') : this.t('qbit_bad_pass'); }
             } catch (e) { this.qbitMsg = String(e); }
             finally { this.qbitConnecting = false; }
@@ -519,6 +575,81 @@ const app = createApp({
                 this.loadProwlarr();
             } catch (e) { alert(this.t('alert_indexer_add_failed', { name, msg: e.message })); }
             finally { this.addingIndexer = ''; }
+        },
+        // --- Bazarr: per-episode subs (modal) ---
+        async openSubsPanel() {
+            if (!this.selected || !this.services.bazarr) return;
+            this.showSubs = true;
+            this.epSubsResults = null; this.epSubDownloading = {};
+            this.epSubsLoading = true;
+            try {
+                const r = await fetch(`/api/bazarr/episode/subs?seriesId=${this.selected.seriesId}&episodeId=${this.selected.episodeId}`);
+                if (r.ok) { const d = await r.json(); this.epSubsCurrent = d.subtitles || []; }
+                else { this.epSubsCurrent = []; }
+            } catch (e) { this.epSubsCurrent = []; }
+            finally { this.epSubsLoading = false; }
+        },
+        async searchSubs() {
+            if (!this.selected) return;
+            this.epSubsSearching = true; this.epSubsResults = null;
+            try {
+                const r = await fetch(`/api/bazarr/episode/search?episodeId=${this.selected.episodeId}`);
+                if (!r.ok) throw new Error(await r.text());
+                this.epSubsResults = (await r.json()).results || [];
+            } catch (e) {
+                this.epSubsResults = [];
+                alert(this.t('alert_subs_search_failed', { msg: e.message || '' }));
+            } finally { this.epSubsSearching = false; }
+        },
+        subKey(sub, idx) { return sub.subtitle || sub.url || ('idx' + idx); },
+        async downloadSub(sub, idx) {
+            const key = this.subKey(sub, idx);
+            const st = this.epSubDownloading[key];
+            if (st === 'wait' || st === 'ok') return;
+            this.epSubDownloading[key] = 'wait';
+            try {
+                const r = await fetch('/api/bazarr/episode/download', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ seriesId: this.selected.seriesId, episodeId: this.selected.episodeId, sub }),
+                });
+                if (!r.ok) throw new Error(await r.text());
+                this.epSubDownloading[key] = 'ok';
+                // Refresh the on-disk list so the user sees the new sub appear.
+                this.refreshSubsCurrent();
+            } catch (e) { this.epSubDownloading[key] = 'err'; }
+        },
+        async refreshSubsCurrent() {
+            if (!this.selected) return;
+            try {
+                const r = await fetch(`/api/bazarr/episode/subs?seriesId=${this.selected.seriesId}&episodeId=${this.selected.episodeId}`);
+                if (r.ok) { const d = await r.json(); this.epSubsCurrent = d.subtitles || []; }
+            } catch (e) {}
+        },
+        truthy(v) { return v === true || v === 'True' || v === 'true' || v === 1 || v === '1'; },
+        // --- Bazarr (subtitles) ---
+        async loadBazarr() {
+            if (!this.services.bazarr) { this.bazarrData = null; return; }
+            this.bazarrLoading = true; this.bazarrError = '';
+            try {
+                const r = await fetch('/api/bazarr/overview');
+                if (!r.ok) { this.bazarrError = (await r.text()) || this.t('bazarr_unreachable'); this.bazarrData = null; }
+                else { this.bazarrData = await r.json(); }
+            } catch (e) { this.bazarrError = String(e); this.bazarrData = null; }
+            finally { this.bazarrLoading = false; }
+        },
+        bazarrWantedCount() {
+            if (!this.bazarrData) return 0;
+            return (this.bazarrData.wantedEpisodesTotal || 0) + (this.bazarrData.wantedMoviesTotal || 0);
+        },
+        providerStatusCls(p) {
+            const s = (p.status || '').toLowerCase();
+            if (!s || s === 'good') return 'ok';
+            return 'err';
+        },
+        fmtScore(s) {
+            if (s === null || s === undefined) return '';
+            if (typeof s === 'string') return s;
+            return s + '%';
         },
         async prowlarrToggle(ix) {
             const enable = !ix.enable;
@@ -654,6 +785,7 @@ const app = createApp({
     async mounted() {
         document.documentElement.lang = this.lang;
         await this.loadStatus();
+        this.loadSetupStatus();
         this.load();
         this.loadDisk();
         this.connectWS();
@@ -731,6 +863,26 @@ const app = createApp({
             </div>
         </div>
     </header>
+
+    <div v-if="setupActions.length" class="setup-banners">
+        <div v-for="a in setupActions" :key="a.id" class="setup-banner">
+            <icon name="settings"></icon>
+            <template v-if="a.kind === 'downloadclient'">
+                <div class="setup-text">
+                    <b>{{ t('setup_dlclient_title', { service: a.name }) }}</b>
+                    <span>{{ t('setup_dlclient_desc', { service: a.name }) }} <code class="setup-vals" v-if="a.qbit && a.qbit.installed">{{ a.qbit.host }}:{{ a.qbit.port }} · {{ a.qbit.username }}</code></span>
+                </div>
+                <button v-if="a.url" class="btn btn-play setup-btn" @click="openExternal(a.url)">{{ t('setup_open_sonarr', { service: a.name }) }}</button>
+            </template>
+            <template v-else>
+                <div class="setup-text">
+                    <b>{{ t('setup_rootfolder_title', { service: a.name }) }}</b>
+                    <span>{{ t('setup_rootfolder_desc', { service: a.name }) }}</span>
+                </div>
+                <button v-if="a.url" class="btn btn-play setup-btn" @click="openExternal(a.url)">{{ t('setup_open_sonarr', { service: a.name }) }}</button>
+            </template>
+        </div>
+    </div>
 
     <div v-if="seriesQuery && (seriesResults !== null || seriesSearching)" class="search-backdrop" @click="seriesQuery=''; seriesResults=null"></div>
 
@@ -947,10 +1099,103 @@ const app = createApp({
                 </table>
             </div>
         </section>
+
+        <section v-else-if="view === 'subtitles'" class="page">
+            <div class="page-head">
+                <div>
+                    <h1 class="month">{{ t('nav_subtitles') }}</h1>
+                    <p class="subtitle">{{ t('bazarr_count', { n: bazarrWantedCount() }) }}</p>
+                </div>
+            </div>
+            <div v-if="!services.bazarr" class="page-empty"><icon name="bolt"></icon><p><b>{{ t('bazarr_not_installed') }}</b><br>{{ t('bazarr_not_installed_desc') }}</p></div>
+            <div v-else-if="bazarrLoading" class="loading">{{ t('loading') }}</div>
+            <div v-else-if="bazarrError" class="page-empty"><icon name="bolt"></icon><p>{{ bazarrError }}</p></div>
+            <div v-else-if="bazarrData" class="bz-grid">
+                <div class="bz-block">
+                    <h2 class="bz-title">{{ t('bz_wanted_episodes') }} <span class="bz-pill">{{ bazarrData.wantedEpisodesTotal || 0 }}</span></h2>
+                    <div v-if="!bazarrData.wantedEpisodes || bazarrData.wantedEpisodes.length === 0" class="bz-empty">{{ t('bz_none_missing') }}</div>
+                    <div v-else class="table-wrap">
+                        <table class="data-table">
+                            <thead><tr><th>{{ t('bz_th_series') }}</th><th>{{ t('bz_th_episode') }}</th><th>{{ t('bz_th_missing_langs') }}</th></tr></thead>
+                            <tbody>
+                                <tr v-for="ep in bazarrData.wantedEpisodes" :key="ep.sonarrEpisodeId + '-' + ep.seriesTitle">
+                                    <td class="d-name">{{ ep.seriesTitle }}</td>
+                                    <td>{{ ep.episode_number }} <span class="muted">{{ ep.episodeTitle }}</span></td>
+                                    <td><span class="bz-lang" v-for="l in ep.missing_subtitles_languages" :key="l">{{ l }}</span></td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="bz-block">
+                    <h2 class="bz-title">{{ t('bz_wanted_movies') }} <span class="bz-pill">{{ bazarrData.wantedMoviesTotal || 0 }}</span></h2>
+                    <div v-if="!bazarrData.wantedMovies || bazarrData.wantedMovies.length === 0" class="bz-empty">{{ t('bz_none_missing') }}</div>
+                    <div v-else class="table-wrap">
+                        <table class="data-table">
+                            <thead><tr><th>{{ t('bz_th_movie') }}</th><th>{{ t('bz_th_year') }}</th><th>{{ t('bz_th_missing_langs') }}</th></tr></thead>
+                            <tbody>
+                                <tr v-for="m in bazarrData.wantedMovies" :key="m.radarrId + '-' + m.title">
+                                    <td class="d-name">{{ m.title }}</td>
+                                    <td>{{ m.year }}</td>
+                                    <td><span class="bz-lang" v-for="l in m.missing_subtitles_languages" :key="l">{{ l }}</span></td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="bz-block">
+                    <h2 class="bz-title">{{ t('bz_providers') }}</h2>
+                    <div v-if="!bazarrData.providers || bazarrData.providers.length === 0" class="bz-empty">{{ t('bz_no_provider') }}</div>
+                    <div v-else class="bz-providers">
+                        <div class="bz-provider" :class="providerStatusCls(p)" v-for="p in bazarrData.providers" :key="p.name">
+                            <span class="bz-dot"></span>
+                            <span class="bz-prov-name">{{ p.name }}</span>
+                            <span class="bz-prov-status" v-if="providerStatusCls(p) === 'err'">{{ p.status }}</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="bz-block">
+                    <h2 class="bz-title">{{ t('bz_languages') }}</h2>
+                    <div v-if="!bazarrData.languages || bazarrData.languages.length === 0" class="bz-empty">{{ t('bz_no_language') }}</div>
+                    <div v-else class="bz-langs">
+                        <span class="bz-lang" v-for="l in bazarrData.languages" :key="l.code2">{{ l.name }}</span>
+                    </div>
+                </div>
+
+                <div class="bz-block bz-block-wide">
+                    <h2 class="bz-title">{{ t('bz_history') }}</h2>
+                    <div v-if="(!bazarrData.historyEpisodes || bazarrData.historyEpisodes.length === 0) && (!bazarrData.historyMovies || bazarrData.historyMovies.length === 0)" class="bz-empty">{{ t('bz_no_history') }}</div>
+                    <div v-else class="table-wrap">
+                        <table class="data-table">
+                            <thead><tr><th>{{ t('bz_th_when') }}</th><th>{{ t('bz_th_item') }}</th><th>{{ t('bz_th_lang') }}</th><th>{{ t('bz_th_provider') }}</th><th>{{ t('bz_th_score') }}</th></tr></thead>
+                            <tbody>
+                                <tr v-for="(h, i) in (bazarrData.historyEpisodes || [])" :key="'e' + i">
+                                    <td class="muted">{{ h.timestamp }}</td>
+                                    <td class="d-name">{{ h.seriesTitle }} <span class="muted">{{ h.episodeTitle }}</span></td>
+                                    <td>{{ h.language }}</td>
+                                    <td>{{ h.provider }}</td>
+                                    <td>{{ fmtScore(h.score) }}</td>
+                                </tr>
+                                <tr v-for="(h, i) in (bazarrData.historyMovies || [])" :key="'m' + i">
+                                    <td class="muted">{{ h.timestamp }}</td>
+                                    <td class="d-name">{{ h.title }}</td>
+                                    <td>{{ h.language }}</td>
+                                    <td>{{ h.provider }}</td>
+                                    <td>{{ fmtScore(h.score) }}</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </section>
     </main>
 
     <div class="modal-backdrop" v-if="selected" @click.self="closeModal">
-        <div class="modal modal-fiche" :class="{ 'with-torrents': showTorrents }">
+        <div class="modal modal-fiche" :class="{ 'with-torrents': showTorrents || showSubs }">
             <div class="fiche-bg" :style="selected.poster ? { backgroundImage: 'url(' + selected.poster + ')' } : null"></div>
             <div class="fiche-tint"></div>
             <div class="fiche-inner">
@@ -969,7 +1214,7 @@ const app = createApp({
                         </div>
                     </aside>
                     <div class="fiche-main">
-                        <div class="fiche-panel fiche-panel-a" :class="{ off: showTorrents }" :inert="showTorrents">
+                        <div class="fiche-panel fiche-panel-a" :class="{ off: showTorrents || showSubs }" :inert="showTorrents || showSubs">
                             <div class="fiche-chips-row">
                                 <span class="fiche-title-strong">{{ selected.series }}</span>
                                 <span class="fiche-chip" v-if="selected.year"><icon name="schedule"></icon> {{ selected.year }}</span>
@@ -1002,6 +1247,11 @@ const app = createApp({
                             <button class="fiche-torrents-cta" @click="searchTorrents">
                                 <div class="fiche-torrents-cta-icon"><icon name="search"></icon></div>
                                 <span class="fiche-torrents-cta-title">{{ t('search_torrents') }}</span>
+                                <span class="fiche-torrents-cta-arrow"><icon name="chevron_right"></icon></span>
+                            </button>
+                            <button class="fiche-torrents-cta fiche-subs-cta" v-if="services.bazarr" @click="openSubsPanel">
+                                <div class="fiche-torrents-cta-icon"><icon name="bolt"></icon></div>
+                                <span class="fiche-torrents-cta-title">{{ t('manage_subtitles') }}</span>
                                 <span class="fiche-torrents-cta-arrow"><icon name="chevron_right"></icon></span>
                             </button>
                         </div>
@@ -1071,9 +1321,14 @@ const app = createApp({
                                         <template v-else>
                                             <tr v-for="r in filteredReleases" :key="r.guid" :class="{ rejected: r.rejected }">
                                                 <td class="fiche-tor-title">
-                                                    <a v-if="r.infoUrl" :href="r.infoUrl" target="_blank" rel="noopener" class="fiche-tor-name" :title="(r.rejections && r.rejections.length) ? r.rejections.join(' · ') : r.title">{{ r.title }}</a>
+                                                    <a v-if="r.infoUrl" :href="r.infoUrl" target="_blank" rel="noopener" class="fiche-tor-name" :title="(r.rejections && r.rejections.length) ? r.rejections.join(' · ') : r.title">
+                                                        {{ r.title }} <icon name="external" class="fiche-tor-info"></icon>
+                                                    </a>
                                                     <span v-else class="fiche-tor-name" :title="(r.rejections && r.rejections.length) ? r.rejections.join(' · ') : r.title">{{ r.title }}</span>
-                                                    <span class="fiche-tor-idx">{{ r.indexer }}</span>
+                                                    <span class="fiche-tor-meta">
+                                                        <span class="fiche-tor-idx">{{ r.indexer }}</span>
+                                                        <span class="rel-lang" :class="b.cls" v-for="b in parseLangs(r.title)" :key="b.label">{{ b.label }}</span>
+                                                    </span>
                                                 </td>
                                                 <td><span class="q-badge" :class="qBadge(r.quality)">{{ r.quality }}</span></td>
                                                 <td class="num t-nowrap">{{ fmtSize(r.size) }}</td>
@@ -1099,6 +1354,108 @@ const app = createApp({
                                     </template>
                                 </span>
                                 <span>{{ t('prowlarr_connected_short') }}</span>
+                            </div>
+                        </div>
+                        <div class="fiche-panel fiche-panel-c" :class="{ on: showSubs }" :inert="!showSubs">
+                            <div class="fiche-tor-head">
+                                <button class="fiche-back-btn" @click="closeSubsPanel">
+                                    <icon name="chevron_left"></icon>
+                                    <span>{{ t('back_episode') }}</span>
+                                </button>
+                                <span class="fiche-tor-status" :class="{ loading: epSubsSearching || epSubsLoading }">
+                                    <span class="fiche-tor-dot"></span>
+                                    <template v-if="epSubsSearching">{{ t('searching_subs') }}</template>
+                                    <template v-else-if="epSubsLoading">{{ t('loading') }}</template>
+                                    <template v-else-if="epSubsResults">{{ t('n_results_found', { n: epSubsResults.length }) }}</template>
+                                    <template v-else>{{ t('subs_present_n', { n: (epSubsCurrent || []).length }) }}</template>
+                                </span>
+                            </div>
+                            <div class="fiche-subs-current" v-if="epSubsCurrent && !epSubsSearching">
+                                <div class="fiche-subs-head">{{ t('subs_present') }}</div>
+                                <div v-if="epSubsCurrent.length === 0" class="fiche-subs-none">{{ t('subs_none') }}</div>
+                                <div v-else class="fiche-subs-list">
+                                    <span class="fiche-sub-pill" v-for="(s, i) in epSubsCurrent" :key="'cur'+i">
+                                        <icon name="check"></icon>
+                                        <span>{{ s.name }}</span>
+                                    </span>
+                                </div>
+                            </div>
+                            <div class="fiche-subs-action" v-if="!epSubsResults && !epSubsSearching">
+                                <button class="fiche-btn fiche-btn-play" @click="searchSubs">
+                                    <icon name="search"></icon>
+                                    <span>{{ t('search_subs') }}</span>
+                                </button>
+                                <span class="muted">{{ t('search_subs_hint') }}</span>
+                            </div>
+                            <div class="fiche-tor-table-wrap" v-if="epSubsSearching">
+                                <table class="fiche-tor-table">
+                                    <thead>
+                                        <tr>
+                                            <th>{{ t('th_lang') }}</th>
+                                            <th>{{ t('bz_th_provider') }}</th>
+                                            <th>Info</th>
+                                            <th class="num">{{ t('bz_th_score') }}</th>
+                                            <th class="dl-col">DL</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody class="fiche-skel">
+                                        <tr v-for="i in 4" :key="'sks'+i">
+                                            <td><div class="fiche-sk fiche-sk-badge"></div></td>
+                                            <td><div class="fiche-sk fiche-sk-line w-50"></div></td>
+                                            <td><div class="fiche-sk fiche-sk-line w-80 sm"></div></td>
+                                            <td class="num"><div class="fiche-sk fiche-sk-line w-30 r"></div></td>
+                                            <td class="dl-col"><div class="fiche-sk fiche-sk-btn"></div></td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                            <div class="fiche-tor-table-wrap" v-if="epSubsResults && !epSubsSearching">
+                                <table class="fiche-tor-table">
+                                    <thead>
+                                        <tr>
+                                            <th>{{ t('th_lang') }}</th>
+                                            <th>{{ t('bz_th_provider') }}</th>
+                                            <th>Info</th>
+                                            <th class="num">{{ t('bz_th_score') }}</th>
+                                            <th class="dl-col">DL</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr v-if="epSubsResults.length === 0">
+                                            <td colspan="5" class="fiche-tor-empty">
+                                                <icon name="schedule"></icon>
+                                                <span>{{ t('subs_none_found') }}</span>
+                                            </td>
+                                        </tr>
+                                        <tr v-for="(sub, i) in epSubsResults" :key="subKey(sub, i)">
+                                            <td><span class="bz-lang">{{ sub.language }}</span></td>
+                                            <td>{{ sub.provider }}</td>
+                                            <td class="muted">
+                                                <span v-if="truthy(sub.hearing_impaired)" class="fiche-sub-tag">HI</span>
+                                                <span v-if="truthy(sub.forced)" class="fiche-sub-tag">forced</span>
+                                                <span v-if="sub.uploader" class="fiche-sub-uploader">{{ sub.uploader }}</span>
+                                            </td>
+                                            <td class="num">{{ sub.score }}</td>
+                                            <td class="dl-col">
+                                                <button class="fiche-dl-btn" :class="epSubDownloading[subKey(sub, i)]"
+                                                    @click="downloadSub(sub, i)"
+                                                    :disabled="epSubDownloading[subKey(sub, i)]==='wait' || epSubDownloading[subKey(sub, i)]==='ok'"
+                                                    :title="epSubDownloading[subKey(sub, i)]==='ok' ? t('subs_downloaded') : (epSubDownloading[subKey(sub, i)]==='err' ? t('failed') : t('download_verb'))">
+                                                    <icon :name="epSubDownloading[subKey(sub, i)]==='ok' ? 'check' : (epSubDownloading[subKey(sub, i)]==='err' ? 'close' : 'download')"></icon>
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                            <div class="fiche-tor-foot">
+                                <span class="fiche-tor-foot-l">
+                                    <template v-if="epSubsSearching">
+                                        <icon name="sync" class="spin"></icon>
+                                        <span>{{ t('querying_providers') }}</span>
+                                    </template>
+                                </span>
+                                <span>{{ t('bazarr_connected') }}</span>
                             </div>
                         </div>
                     </div>
@@ -1223,7 +1580,11 @@ const app = createApp({
                             </tr></thead>
                             <tbody>
                                 <tr v-for="r in filmReleases" :key="r.guid" :class="{ rejected: r.rejected }">
-                                    <td class="t-title" :title="(r.rejections && r.rejections.length) ? r.rejections.join(' · ') : r.title"><a v-if="r.infoUrl" :href="r.infoUrl" target="_blank" rel="noopener" class="t-link">{{ r.title }}</a><template v-else>{{ r.title }}</template></td>
+                                    <td class="t-title" :title="(r.rejections && r.rejections.length) ? r.rejections.join(' · ') : r.title">
+                                        <a v-if="r.infoUrl" :href="r.infoUrl" target="_blank" rel="noopener" class="t-link">{{ r.title }} <icon name="external" class="fiche-tor-info"></icon></a>
+                                        <template v-else>{{ r.title }}</template>
+                                        <span class="rel-lang ml" :class="b.cls" v-for="b in parseLangs(r.title)" :key="b.label">{{ b.label }}</span>
+                                    </td>
                                     <td class="t-idx">{{ r.indexer }}</td>
                                     <td><span class="q-badge" :class="qBadge(r.quality)">{{ r.quality }}</span></td>
                                     <td class="t-nowrap">{{ fmtSize(r.size) }}</td>

@@ -16,7 +16,22 @@ const LANGS = [
 
 const MESSAGES = {
     en: {
-        nav_calendar: "Calendar", nav_films: "Movies", nav_torrents: "Torrents", nav_prowlarr: "Prowlarr",
+        nav_calendar: "Calendar", nav_films: "Movies", nav_torrents: "Torrents", nav_prowlarr: "Prowlarr", nav_subtitles: "Subtitles",
+        bazarr_count: "{n} missing", bazarr_unreachable: "Bazarr unreachable",
+        bazarr_not_installed: "Bazarr not installed.", bazarr_not_installed_desc: "Install Bazarr to manage subtitles for your series and movies.",
+        bz_wanted_episodes: "Missing — Episodes", bz_wanted_movies: "Missing — Movies",
+        bz_providers: "Providers", bz_languages: "Languages", bz_history: "Recent history",
+        bz_none_missing: "Nothing missing.", bz_no_provider: "No provider configured.",
+        bz_no_language: "No language configured.", bz_no_history: "No recent download.",
+        bz_th_series: "Series", bz_th_episode: "Episode", bz_th_movie: "Movie", bz_th_year: "Year",
+        bz_th_missing_langs: "Missing", bz_th_when: "When", bz_th_item: "Item", bz_th_lang: "Lang",
+        bz_th_provider: "Provider", bz_th_score: "Score",
+        manage_subtitles: "Manage subtitles", searching_subs: "Searching subtitles…",
+        subs_present: "Already on disk", subs_present_n: "{n} on disk", subs_none: "No subtitle on disk.",
+        search_subs: "Search subtitles", search_subs_hint: "Bazarr will query every configured provider (10-30s).",
+        subs_none_found: "No subtitle found.", subs_downloaded: "Downloaded",
+        querying_providers: "Querying providers…", bazarr_connected: "Bazarr connected",
+        alert_subs_search_failed: "Subtitle search failed. {msg}",
         loading: "Loading…", qbit_password_title: "Connect qBittorrent", qbit_password_desc: "qBittorrent is detected. Enter your Web UI password to connect.", qbit_password_ph: "Password", qbit_webui_title: "Enable the qBittorrent Web UI", qbit_webui_desc: "In qBittorrent: Tools → Options → Web UI, check \"Enable\".", qbit_bad_pass: "Password rejected.", qbit_banned: "Too many attempts — qBittorrent temporarily banned this address. Try again in a few minutes.", refresh: "Refresh", cancel: "Cancel", delete: "Delete", pause: "Pause", resume: "Resume",
         enable: "Enable", disable: "Disable", connect: "Connect", run: "Run", failed: "Failed", download_verb: "Download",
         min: "min", play_mpc: "Play in MPC-BE", watched: "Watched", mark_watched: "Mark as watched",
@@ -68,7 +83,22 @@ const MESSAGES = {
         querying_indexers: "Querying indexers…", prowlarr_connected_short: "Prowlarr connected",
     },
     fr: {
-        nav_calendar: "Calendrier", nav_films: "Films", nav_torrents: "Torrents", nav_prowlarr: "Prowlarr",
+        nav_calendar: "Calendrier", nav_films: "Films", nav_torrents: "Torrents", nav_prowlarr: "Prowlarr", nav_subtitles: "Sous-titres",
+        bazarr_count: "{n} manquants", bazarr_unreachable: "Bazarr injoignable",
+        bazarr_not_installed: "Bazarr non installé.", bazarr_not_installed_desc: "Installe Bazarr pour gérer les sous-titres de tes séries et films.",
+        bz_wanted_episodes: "Manquants — Épisodes", bz_wanted_movies: "Manquants — Films",
+        bz_providers: "Fournisseurs", bz_languages: "Langues", bz_history: "Historique récent",
+        bz_none_missing: "Rien ne manque.", bz_no_provider: "Aucun fournisseur configuré.",
+        bz_no_language: "Aucune langue configurée.", bz_no_history: "Aucun téléchargement récent.",
+        bz_th_series: "Série", bz_th_episode: "Épisode", bz_th_movie: "Film", bz_th_year: "Année",
+        bz_th_missing_langs: "Manquant", bz_th_when: "Quand", bz_th_item: "Élément", bz_th_lang: "Langue",
+        bz_th_provider: "Fournisseur", bz_th_score: "Score",
+        manage_subtitles: "Gérer les sous-titres", searching_subs: "Recherche de sous-titres…",
+        subs_present: "Déjà sur le disque", subs_present_n: "{n} sur le disque", subs_none: "Aucun sous-titre sur le disque.",
+        search_subs: "Chercher des sous-titres", search_subs_hint: "Bazarr interroge tous les fournisseurs configurés (10-30s).",
+        subs_none_found: "Aucun sous-titre trouvé.", subs_downloaded: "Téléchargé",
+        querying_providers: "Interrogation des fournisseurs…", bazarr_connected: "Bazarr connecté",
+        alert_subs_search_failed: "Recherche de sous-titres échouée. {msg}",
         loading: "Chargement…", qbit_password_title: "Connecter qBittorrent", qbit_password_desc: "qBittorrent est détecté. Entre le mot de passe de ta Web UI pour te connecter.", qbit_password_ph: "Mot de passe", qbit_webui_title: "Active la Web UI de qBittorrent", qbit_webui_desc: "Dans qBittorrent : Outils → Options → Web UI, coche « Activer ».", qbit_bad_pass: "Mot de passe refusé.", qbit_banned: "Trop de tentatives — qBittorrent a temporairement bloqué cette adresse. Réessaie dans quelques minutes.", refresh: "Rafraîchir", cancel: "Annuler", delete: "Supprimer", pause: "Pause", resume: "Reprendre",
         enable: "Activer", disable: "Désactiver", connect: "Connecter", run: "Lancer", failed: "Échec", download_verb: "Télécharger",
         min: "min", play_mpc: "Lire dans MPC-BE", watched: "Vu", mark_watched: "Marquer comme vu",
@@ -497,6 +527,182 @@ function detectLocale() {
         if (MESSAGES[code]) return code;
     }
     return 'en';
+}
+
+// Stack auto-setup banners. Kept in a separate block and merged into MESSAGES
+// so the per-language dictionaries above stay focused. {service} = Sonarr/Radarr.
+const SETUP_MESSAGES = {
+    en: {
+        setup_qbit_auth_title: "qBittorrent needs a password",
+        setup_qbit_auth_desc: "It couldn't be added as a download client automatically. Connect qBittorrent on the Torrents page and it gets wired in.",
+        setup_goto_torrents: "Open Torrents",
+        setup_rootfolder_title: "{service}: set a media folder",
+        setup_rootfolder_desc: "{service} has no root folder yet. Add the folder where your media lives so you can add and import titles.",
+        setup_rootfolder_ph: "Path, e.g. D:\\Media",
+        setup_apply: "Apply",
+    },
+    fr: {
+        setup_qbit_auth_title: "qBittorrent demande un mot de passe",
+        setup_qbit_auth_desc: "Il n'a pas pu être ajouté comme client de téléchargement automatiquement. Connecte qBittorrent sur la page Torrents et il sera relié.",
+        setup_goto_torrents: "Ouvrir Torrents",
+        setup_rootfolder_title: "{service} : définir un dossier média",
+        setup_rootfolder_desc: "{service} n'a pas encore de dossier racine. Ajoute le dossier où sont tes médias pour pouvoir ajouter et importer des titres.",
+        setup_rootfolder_ph: "Chemin, ex. D:\\Media",
+        setup_apply: "Appliquer",
+    },
+    es: {
+        setup_qbit_auth_title: "qBittorrent necesita una contraseña",
+        setup_qbit_auth_desc: "No se pudo añadir como cliente de descargas automáticamente. Conecta qBittorrent en la página Torrents y se vinculará.",
+        setup_goto_torrents: "Abrir Torrents",
+        setup_rootfolder_title: "{service}: define una carpeta multimedia",
+        setup_rootfolder_desc: "{service} aún no tiene carpeta raíz. Añade la carpeta donde está tu contenido para poder añadir e importar títulos.",
+        setup_rootfolder_ph: "Ruta, p. ej. D:\\Media",
+        setup_apply: "Aplicar",
+    },
+    de: {
+        setup_qbit_auth_title: "qBittorrent benötigt ein Passwort",
+        setup_qbit_auth_desc: "Es konnte nicht automatisch als Download-Client hinzugefügt werden. Verbinde qBittorrent auf der Torrents-Seite, dann wird es eingebunden.",
+        setup_goto_torrents: "Torrents öffnen",
+        setup_rootfolder_title: "{service}: Medienordner festlegen",
+        setup_rootfolder_desc: "{service} hat noch keinen Stammordner. Füge den Ordner mit deinen Medien hinzu, um Titel hinzufügen und importieren zu können.",
+        setup_rootfolder_ph: "Pfad, z. B. D:\\Media",
+        setup_apply: "Übernehmen",
+    },
+    pt: {
+        setup_qbit_auth_title: "qBittorrent precisa de uma senha",
+        setup_qbit_auth_desc: "Não foi possível adicioná-lo como cliente de download automaticamente. Conecte o qBittorrent na página Torrents e ele será vinculado.",
+        setup_goto_torrents: "Abrir Torrents",
+        setup_rootfolder_title: "{service}: defina uma pasta de mídia",
+        setup_rootfolder_desc: "{service} ainda não tem pasta raiz. Adicione a pasta onde ficam suas mídias para poder adicionar e importar títulos.",
+        setup_rootfolder_ph: "Caminho, ex. D:\\Media",
+        setup_apply: "Aplicar",
+    },
+    ru: {
+        setup_qbit_auth_title: "qBittorrent требует пароль",
+        setup_qbit_auth_desc: "Его не удалось автоматически добавить как клиент загрузки. Подключите qBittorrent на странице Torrents, и он будет привязан.",
+        setup_goto_torrents: "Открыть Torrents",
+        setup_rootfolder_title: "{service}: укажите папку медиа",
+        setup_rootfolder_desc: "У {service} ещё нет корневой папки. Добавьте папку, где хранятся медиафайлы, чтобы добавлять и импортировать.",
+        setup_rootfolder_ph: "Путь, напр. D:\\Media",
+        setup_apply: "Применить",
+    },
+    ja: {
+        setup_qbit_auth_title: "qBittorrent にパスワードが必要です",
+        setup_qbit_auth_desc: "ダウンロードクライアントとして自動追加できませんでした。Torrents ページで qBittorrent を接続すると連携されます。",
+        setup_goto_torrents: "Torrents を開く",
+        setup_rootfolder_title: "{service}：メディアフォルダを設定",
+        setup_rootfolder_desc: "{service} にルートフォルダがまだありません。メディアの保存先フォルダを追加すると、タイトルの追加・取り込みができます。",
+        setup_rootfolder_ph: "パス（例: D:\\Media）",
+        setup_apply: "適用",
+    },
+    ko: {
+        setup_qbit_auth_title: "qBittorrent에 비밀번호가 필요합니다",
+        setup_qbit_auth_desc: "다운로드 클라이언트로 자동 추가하지 못했습니다. Torrents 페이지에서 qBittorrent를 연결하면 연동됩니다.",
+        setup_goto_torrents: "Torrents 열기",
+        setup_rootfolder_title: "{service}: 미디어 폴더 설정",
+        setup_rootfolder_desc: "{service}에 루트 폴더가 아직 없습니다. 미디어가 있는 폴더를 추가하면 타이틀을 추가하고 가져올 수 있습니다.",
+        setup_rootfolder_ph: "경로, 예: D:\\Media",
+        setup_apply: "적용",
+    },
+    zh: {
+        setup_qbit_auth_title: "qBittorrent 需要密码",
+        setup_qbit_auth_desc: "无法自动将其添加为下载客户端。请在 Torrents 页面连接 qBittorrent，即可自动接入。",
+        setup_goto_torrents: "打开 Torrents",
+        setup_rootfolder_title: "{service}：设置媒体文件夹",
+        setup_rootfolder_desc: "{service} 还没有根文件夹。添加存放媒体的文件夹后即可添加和导入条目。",
+        setup_rootfolder_ph: "路径，例如 D:\\Media",
+        setup_apply: "应用",
+    },
+};
+for (const code in SETUP_MESSAGES) {
+    if (MESSAGES[code]) Object.assign(MESSAGES[code], SETUP_MESSAGES[code]);
+}
+
+// "No download client" banner + the one-click Configure button (user-triggered).
+const SETUP_DLCLIENT_MESSAGES = {
+    en: { setup_dlclient_title: "No download client", setup_dlclient_desc: "Sonarr/Radarr can't download anything yet. Wire in your detected qBittorrent in one click.", setup_dlclient_btn: "Configure qBittorrent" },
+    fr: { setup_dlclient_title: "Aucun client de téléchargement", setup_dlclient_desc: "Sonarr/Radarr ne peut rien télécharger pour l'instant. Relie le qBittorrent détecté en un clic.", setup_dlclient_btn: "Configurer qBittorrent" },
+    es: { setup_dlclient_title: "Sin cliente de descargas", setup_dlclient_desc: "Sonarr/Radarr aún no puede descargar nada. Vincula el qBittorrent detectado con un clic.", setup_dlclient_btn: "Configurar qBittorrent" },
+    de: { setup_dlclient_title: "Kein Download-Client", setup_dlclient_desc: "Sonarr/Radarr kann noch nichts herunterladen. Binde das erkannte qBittorrent mit einem Klick ein.", setup_dlclient_btn: "qBittorrent einrichten" },
+    pt: { setup_dlclient_title: "Sem cliente de download", setup_dlclient_desc: "Sonarr/Radarr ainda não consegue baixar nada. Vincule o qBittorrent detectado com um clique.", setup_dlclient_btn: "Configurar qBittorrent" },
+    ru: { setup_dlclient_title: "Нет клиента загрузки", setup_dlclient_desc: "Sonarr/Radarr пока не может ничего скачивать. Подключите обнаруженный qBittorrent одним кликом.", setup_dlclient_btn: "Настроить qBittorrent" },
+    ja: { setup_dlclient_title: "ダウンロードクライアントなし", setup_dlclient_desc: "Sonarr/Radarr はまだ何もダウンロードできません。検出された qBittorrent をワンクリックで連携します。", setup_dlclient_btn: "qBittorrent を設定" },
+    ko: { setup_dlclient_title: "다운로드 클라이언트 없음", setup_dlclient_desc: "Sonarr/Radarr가 아직 아무것도 받을 수 없습니다. 감지된 qBittorrent를 한 번의 클릭으로 연결하세요.", setup_dlclient_btn: "qBittorrent 설정" },
+    zh: { setup_dlclient_title: "没有下载客户端", setup_dlclient_desc: "Sonarr/Radarr 还无法下载。一键接入检测到的 qBittorrent。", setup_dlclient_btn: "配置 qBittorrent" },
+};
+for (const code in SETUP_DLCLIENT_MESSAGES) {
+    if (MESSAGES[code]) Object.assign(MESSAGES[code], SETUP_DLCLIENT_MESSAGES[code]);
+}
+
+// Read-only guidance banners (detect + point to the *arr settings page).
+// Merged last so it overrides the earlier write-oriented wording. {service} = Sonarr/Radarr.
+const SETUP_GUIDE_MESSAGES = {
+    en: {
+        setup_dlclient_title: "{service}: no download client",
+        setup_dlclient_desc: "{service} can't download anything yet. Add qBittorrent in its settings:",
+        setup_rootfolder_title: "{service}: no media folder",
+        setup_rootfolder_desc: "{service} has no root folder yet — add one in its settings so it can add and import media.",
+        setup_open_sonarr: "Open {service}",
+    },
+    fr: {
+        setup_dlclient_title: "{service} : aucun client de téléchargement",
+        setup_dlclient_desc: "{service} ne peut rien télécharger. Ajoute qBittorrent dans ses réglages :",
+        setup_rootfolder_title: "{service} : aucun dossier média",
+        setup_rootfolder_desc: "{service} n'a pas de dossier racine — ajoutes-en un dans ses réglages pour pouvoir ajouter et importer.",
+        setup_open_sonarr: "Ouvrir {service}",
+    },
+    es: {
+        setup_dlclient_title: "{service}: sin cliente de descargas",
+        setup_dlclient_desc: "{service} aún no puede descargar nada. Añade qBittorrent en sus ajustes:",
+        setup_rootfolder_title: "{service}: sin carpeta multimedia",
+        setup_rootfolder_desc: "{service} no tiene carpeta raíz — añade una en sus ajustes para poder añadir e importar.",
+        setup_open_sonarr: "Abrir {service}",
+    },
+    de: {
+        setup_dlclient_title: "{service}: kein Download-Client",
+        setup_dlclient_desc: "{service} kann noch nichts herunterladen. Füge qBittorrent in den Einstellungen hinzu:",
+        setup_rootfolder_title: "{service}: kein Medienordner",
+        setup_rootfolder_desc: "{service} hat keinen Stammordner — füge in den Einstellungen einen hinzu, um Medien hinzuzufügen und zu importieren.",
+        setup_open_sonarr: "{service} öffnen",
+    },
+    pt: {
+        setup_dlclient_title: "{service}: sem cliente de download",
+        setup_dlclient_desc: "{service} ainda não consegue baixar nada. Adicione o qBittorrent nas configurações:",
+        setup_rootfolder_title: "{service}: sem pasta de mídia",
+        setup_rootfolder_desc: "{service} não tem pasta raiz — adicione uma nas configurações para poder adicionar e importar.",
+        setup_open_sonarr: "Abrir {service}",
+    },
+    ru: {
+        setup_dlclient_title: "{service}: нет клиента загрузки",
+        setup_dlclient_desc: "{service} пока не может ничего скачивать. Добавьте qBittorrent в его настройках:",
+        setup_rootfolder_title: "{service}: нет папки медиа",
+        setup_rootfolder_desc: "У {service} нет корневой папки — добавьте её в настройках, чтобы добавлять и импортировать.",
+        setup_open_sonarr: "Открыть {service}",
+    },
+    ja: {
+        setup_dlclient_title: "{service}：ダウンロードクライアントなし",
+        setup_dlclient_desc: "{service} はまだ何もダウンロードできません。設定で qBittorrent を追加してください:",
+        setup_rootfolder_title: "{service}：メディアフォルダなし",
+        setup_rootfolder_desc: "{service} にルートフォルダがありません。設定で追加すると、追加・取り込みができます。",
+        setup_open_sonarr: "{service} を開く",
+    },
+    ko: {
+        setup_dlclient_title: "{service}: 다운로드 클라이언트 없음",
+        setup_dlclient_desc: "{service}가 아직 아무것도 받을 수 없습니다. 설정에서 qBittorrent를 추가하세요:",
+        setup_rootfolder_title: "{service}: 미디어 폴더 없음",
+        setup_rootfolder_desc: "{service}에 루트 폴더가 없습니다 — 설정에서 추가하면 미디어를 추가하고 가져올 수 있습니다.",
+        setup_open_sonarr: "{service} 열기",
+    },
+    zh: {
+        setup_dlclient_title: "{service}：没有下载客户端",
+        setup_dlclient_desc: "{service} 还无法下载。请在其设置中添加 qBittorrent：",
+        setup_rootfolder_title: "{service}：没有媒体文件夹",
+        setup_rootfolder_desc: "{service} 还没有根文件夹——在其设置中添加一个即可添加和导入。",
+        setup_open_sonarr: "打开 {service}",
+    },
+};
+for (const code in SETUP_GUIDE_MESSAGES) {
+    if (MESSAGES[code]) Object.assign(MESSAGES[code], SETUP_GUIDE_MESSAGES[code]);
 }
 
 window.MESSAGES = MESSAGES;
