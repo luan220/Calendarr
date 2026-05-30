@@ -3,10 +3,9 @@
 // SQLite. No VPS, no heavy framework, a single binary.
 package main
 
-//go:generate goversioninfo -64 -o rsrc.syso versioninfo.json
+//go:generate goversioninfo -64 -o rsrc_windows.syso versioninfo.json
 
 import (
-	_ "embed"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -14,7 +13,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -24,7 +22,6 @@ import (
 
 	_ "time/tzdata" // embeds the timezone database (Windows does not always ship one)
 
-	"fyne.io/systray"
 	"github.com/gorilla/websocket"
 
 	"calendarr-local/internal/desktop"
@@ -36,9 +33,6 @@ import (
 	"calendarr-local/internal/store"
 	"calendarr-local/web"
 )
-
-//go:embed icon.ico
-var iconBytes []byte
 
 // config holds optional settings read from config.json (next to the exe). Allows
 // auto-start (which launches the exe WITHOUT arguments) to know the qBittorrent
@@ -387,88 +381,6 @@ func fatal(msg string) {
 	log.Print(msg)
 	desktop.MessageBox("Calendarr — error", msg)
 	os.Exit(1)
-}
-
-// runTray installs the system-tray icon for server mode. Left-click opens
-// the calendar in the browser; right-click shows the menu (mode toggle,
-// auto-start, close).
-func runTray(port, cfgPath string, cfg config) {
-	_ = desktop.RefreshAutoStart(autostartTaskName)
-	onReady := func() {
-		systray.SetIcon(iconBytes)
-		systray.SetTooltip("Calendarr — server (click to open the calendar)")
-		// Left-click opens the local UI. We do not set SetOnSecondaryTapped,
-		// so right-click keeps the default menu.
-		systray.SetOnTapped(func() { desktop.OpenBrowser("http://localhost:" + port) })
-
-		mModeServer := systray.AddMenuItemCheckbox("Mode: Server", "Full Sonarr-connected calendar (current mode)", true)
-		mModeClient := systray.AddMenuItemCheckbox("Mode: Client", "Switch to client mode (playback helper only)", false)
-		systray.AddSeparator()
-		mAuto := systray.AddMenuItemCheckbox("Launch automatically when Windows starts", "Launch automatically when Windows starts", desktop.AutoStartEnabled(autostartTaskName))
-		systray.AddSeparator()
-		mQuit := systray.AddMenuItem("Quit", "Stop the Calendarr server")
-
-		go func() {
-			for {
-				select {
-				case <-mModeServer.ClickedCh:
-					// already in server mode — no-op (keep checkbox checked)
-					mModeServer.Check()
-				case <-mModeClient.ClickedCh:
-					switchModeAndRestart(cfgPath, cfg, modeClient)
-				case <-mAuto.ClickedCh:
-					enable := !mAuto.Checked()
-					if err := desktop.SetAutoStart(autostartTaskName, enable); err != nil {
-						desktop.MessageBox("Calendarr", "Auto-start: "+err.Error())
-						continue
-					}
-					if enable {
-						mAuto.Check()
-					} else {
-						mAuto.Uncheck()
-					}
-				case <-mQuit.ClickedCh:
-					systray.Quit()
-					return
-				}
-			}
-		}()
-	}
-	systray.Run(onReady, func() { os.Exit(0) })
-}
-
-// switchModeAndRestart writes the new mode to config.json, spawns a fresh
-// instance of the binary, and exits the current process. The child process
-// re-reads config.json at startup and boots in the chosen mode. The brief
-// gap during the swap is handled by bindWithRetry on the child side.
-func switchModeAndRestart(cfgPath string, cfg config, newMode string) {
-	cfg.Mode = newMode
-	data, err := json.MarshalIndent(cfg, "", "  ")
-	if err != nil {
-		desktop.MessageBox("Calendarr", "Mode switch failed: "+err.Error())
-		return
-	}
-	if err := os.WriteFile(cfgPath, data, 0o644); err != nil {
-		desktop.MessageBox("Calendarr", "Mode switch failed: "+err.Error())
-		return
-	}
-	exe, err := os.Executable()
-	if err != nil {
-		desktop.MessageBox("Calendarr", "Mode switch failed: "+err.Error())
-		return
-	}
-	// Plain spawn: under -H=windowsgui there is no console to hide or detach
-	// from, and the child outlives this process on its own. Avoiding
-	// HideWindow / DETACHED_PROCESS keeps the relaunch from resembling a
-	// dropper to antivirus heuristics.
-	cmd := exec.Command(exe)
-	if err := cmd.Start(); err != nil {
-		desktop.MessageBox("Calendarr", "Mode switch failed: "+err.Error())
-		return
-	}
-	log.Printf("switching to %s mode — restarting", newMode)
-	systray.Quit()
-	os.Exit(0)
 }
 
 // needSonarr wraps a handler that depends on Sonarr: if Sonarr was not

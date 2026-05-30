@@ -8,10 +8,7 @@ package main
 import (
 	"log"
 	"net/http"
-	"os"
 	"time"
-
-	"fyne.io/systray"
 
 	"calendarr-local/internal/desktop"
 	"calendarr-local/internal/discovery"
@@ -27,53 +24,6 @@ func runClientMode(addr, mpc, cfgPath string, cfg config, notray bool) {
 		select {} // dev/preview: block here, no tray
 	}
 	runClientTray(addr, cfgPath, cfg)
-}
-
-// runClientTray installs the system-tray icon for client mode. Left-click
-// opens the calendar (auto-discovers a server on the LAN); right-click shows
-// the menu (mode toggle, auto-start, quit).
-func runClientTray(helperAddr, cfgPath string, cfg config) {
-	onReady := func() {
-		systray.SetIcon(iconBytes)
-		systray.SetTooltip("Calendarr (client) — click to open the calendar")
-		systray.SetOnTapped(func() { go openCalendar() })
-
-		mModeServer := systray.AddMenuItemCheckbox("Mode: Server", "Switch to server mode (full Sonarr-connected calendar)", false)
-		mModeClient := systray.AddMenuItemCheckbox("Mode: Client", "Playback helper only (current mode)", true)
-		systray.AddSeparator()
-		mAuto := systray.AddMenuItemCheckbox("Launch automatically when Windows starts", "Launch automatically when Windows starts", desktop.AutoStartEnabled(autostartTaskName))
-		systray.AddSeparator()
-		mQuit := systray.AddMenuItem("Quit", "Quit Calendarr")
-
-		_ = desktop.RefreshAutoStart(autostartTaskName)
-
-		go func() {
-			for {
-				select {
-				case <-mModeServer.ClickedCh:
-					switchModeAndRestart(cfgPath, cfg, modeServer)
-				case <-mModeClient.ClickedCh:
-					// already in client mode — no-op (keep checkbox checked)
-					mModeClient.Check()
-				case <-mAuto.ClickedCh:
-					enable := !mAuto.Checked()
-					if err := desktop.SetAutoStart(autostartTaskName, enable); err != nil {
-						desktop.MessageBox("Calendarr", "Auto-start: "+err.Error())
-						continue
-					}
-					if enable {
-						mAuto.Check()
-					} else {
-						mAuto.Uncheck()
-					}
-				case <-mQuit.ClickedCh:
-					systray.Quit()
-					return
-				}
-			}
-		}()
-	}
-	systray.Run(onReady, func() { os.Exit(0) })
 }
 
 // openCalendar finds a server and opens the calendar in the browser.
