@@ -2,7 +2,7 @@
 
 <img src="docs/logo.png" alt="Calendarr" width="440">
 
-### A self-hosted calendar &amp; remote for your *arr media stack
+### A self-hosted calendar &amp; remote for Sonarr, Radarr and Prowlarr media stack
 
 One Go binary. Zero config. Plays to any screen on your LAN.
 
